@@ -1,4 +1,4 @@
-// KEYBOARD WARRIOR — a rhythm typing game.
+// Keyboard Warrior — a rhythm typing game.
 // Guitar-hero note highway where every gem is a letter; lanes map to finger
 // zones on a QWERTY keyboard. Plays real Clone Hero songs (.sng or folders)
 // through its own cpal mixer, whose sample counter IS the game clock.
@@ -1374,7 +1374,7 @@ fn icon_pixels<const N: usize>(size: usize) -> [u8; N] {
 
 fn window_conf() -> Conf {
     Conf {
-        window_title: "KEYBOARD WARRIOR".to_string(),
+        window_title: "Keyboard Warrior".to_string(),
         window_width: 1100,
         window_height: 800,
         high_dpi: true,

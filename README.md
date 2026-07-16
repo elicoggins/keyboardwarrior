@@ -1,4 +1,4 @@
-# KEYBOARD WARRIOR
+# Keyboard Warrior
 
 A rhythm typing game, copying off the homework of the wonderful project [Clone Hero](https://clonehero.net).
 
