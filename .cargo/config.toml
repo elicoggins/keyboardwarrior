@@ -1,0 +1,4 @@
+[env]
+# The libopus bundled in audiopus_sys ships a pre-3.5 CMakeLists; modern
+# CMake refuses it without this compatibility escape hatch.
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"

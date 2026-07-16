@@ -1,0 +1,18 @@
+[package]
+name = "keyboardwarrior"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+macroquad = "0.4"
+midly = "0.5"
+cpal = "0.15"
+symphonia = { version = "0.5", default-features = false, features = ["mp3", "ogg", "vorbis", "wav", "pcm", "flac"] }
+ogg = "0.9"
+opus = "0.3"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

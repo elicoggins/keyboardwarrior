@@ -1,0 +1,16 @@
+# Build artifacts
+/target
+
+# Song library: charts index copyrighted recordings — never commit audio.
+# See README for where to get songs (and freely-licensed options).
+/songs
+
+# OS junk
+.DS_Store
+**/.DS_Store
+
+# Editor state
+.idea/
+.vscode/
+*.swp
+.claude/
