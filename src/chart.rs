@@ -12,6 +12,7 @@ pub const DIFF_NAMES: [&str; 4] = ["EASY", "MEDIUM", "HARD", "EXPERT"];
 #[derive(Clone, Copy)]
 pub struct ChartNote {
     pub time: f64, // seconds from chart zero
+    pub len: f64,  // sustain length in seconds (0 for a tap)
 }
 
 /// Which charted instrument the gems follow — decides which stem ducks.
@@ -117,7 +118,7 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
     // the intro riff loses to one playing from the top), ties go to density.
     struct TrackData {
         instrument: Instrument,
-        notes: Vec<(u64, u8)>,
+        notes: Vec<(u64, u8, u64)>, // (tick, midi key, length in ticks)
         sp: Vec<(u64, u64)>,
         first: u64,
     }
@@ -125,7 +126,9 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
     for track in &smf.tracks {
         let mut name = String::new();
         let mut tick = 0u64;
-        let mut notes: Vec<(u64, u8)> = Vec::new(); // (tick, midi note-on)
+        let mut notes: Vec<(u64, u8, u64)> = Vec::new();
+        // Open note-ons per key, so note-offs give sustain lengths
+        let mut open = [usize::MAX; 128];
         let mut sp_start: Option<u64> = None;
         let mut local_sp = Vec::new();
         for ev in track {
@@ -140,15 +143,20 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
                         if k == 116 {
                             sp_start = Some(tick);
                         } else {
-                            notes.push((tick, k));
+                            open[k as usize] = notes.len();
+                            notes.push((tick, k, 0));
                         }
                     }
                     midly::MidiMessage::NoteOn { key, .. }
-                    | midly::MidiMessage::NoteOff { key, .. }
-                        if key.as_int() == 116 =>
-                    {
-                        if let Some(s) = sp_start.take() {
-                            local_sp.push((s, tick));
+                    | midly::MidiMessage::NoteOff { key, .. } => {
+                        let k = key.as_int() as usize;
+                        if k == 116 {
+                            if let Some(s) = sp_start.take() {
+                                local_sp.push((s, tick));
+                            }
+                        } else if open[k] != usize::MAX {
+                            notes[open[k]].2 = tick.saturating_sub(notes[open[k]].0);
+                            open[k] = usize::MAX;
                         }
                     }
                     _ => {}
@@ -174,7 +182,7 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
     let mut diffs: [Vec<ChartNote>; 4] = Default::default();
     let mut max_tick = 0u64;
     // Difficulty note ranges: Easy 60–64, Medium 72–76, Hard 84–88, Expert 96–100
-    for (t, k) in best.notes {
+    for (t, k, lt) in best.notes {
         let d = match k {
             60..=64 => 0,
             72..=76 => 1,
@@ -183,9 +191,13 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
             _ => continue,
         };
         max_tick = max_tick.max(t);
-        // Collapse chords: one gem per tick
-        if diffs[d].last().is_none_or(|n: &ChartNote| n.time < map.sec(t) + delay - 1e-9) {
-            diffs[d].push(ChartNote { time: map.sec(t) + delay });
+        let time = map.sec(t) + delay;
+        let len = (map.sec(t + lt) - map.sec(t)).max(0.0);
+        // Collapse chords: one gem per tick, keeping the longest sustain
+        if diffs[d].last().is_none_or(|n: &ChartNote| n.time < time - 1e-9) {
+            diffs[d].push(ChartNote { time, len });
+        } else if let Some(last) = diffs[d].last_mut() {
+            last.len = last.len.max(len);
         }
     }
     let sp_spans = best.sp;
@@ -198,7 +210,7 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
     let sp = [sp_secs.clone(), sp_secs.clone(), sp_secs.clone(), sp_secs];
 
     let beats = beats_until(&map, tpq, max_tick + (tpq as u64) * 8);
-    let end = diffs.iter().flat_map(|d| d.last()).map(|n| n.time).fold(0.0, f64::max);
+    let end = diffs.iter().flat_map(|d| d.iter()).map(|n| n.time + n.len).fold(0.0, f64::max);
     Ok(SongChart {
         title: String::new(),
         artist: String::new(),
@@ -278,10 +290,17 @@ pub fn parse_chart(text: &str, delay: f64) -> Result<SongChart, String> {
             if parts.len() >= 3 && parts[0] == "N" {
                 let fret: u8 = parts[1].parse().unwrap_or(99);
                 // 0–4 are frets, 7 is open; 5/6 are HOPO/tap modifiers
-                if (fret <= 4 || fret == 7) && t != last_tick {
-                    diffs[d].push(ChartNote { time: map.sec(t) + delay });
-                    last_tick = t;
-                    max_tick = max_tick.max(t);
+                if fret <= 4 || fret == 7 {
+                    let lt: u64 = parts[2].parse().unwrap_or(0);
+                    let len = (map.sec(t + lt) - map.sec(t)).max(0.0);
+                    if t != last_tick {
+                        diffs[d].push(ChartNote { time: map.sec(t) + delay, len });
+                        last_tick = t;
+                        max_tick = max_tick.max(t);
+                    } else if let Some(last) = diffs[d].last_mut() {
+                        // Chords collapse to one gem; keep the longest sustain
+                        last.len = last.len.max(len);
+                    }
                 }
             } else if parts.len() >= 3 && parts[0] == "S" && parts[1] == "2" {
                 if let Ok(len) = parts[2].parse::<u64>() {
@@ -295,7 +314,7 @@ pub fn parse_chart(text: &str, delay: f64) -> Result<SongChart, String> {
     }
 
     let beats = beats_until(&map, resolution, max_tick + resolution as u64 * 8);
-    let end = diffs.iter().flat_map(|d| d.last()).map(|n| n.time).fold(0.0, f64::max);
+    let end = diffs.iter().flat_map(|d| d.iter()).map(|n| n.time + n.len).fold(0.0, f64::max);
     // The .chart "Single" track is lead guitar by definition
     Ok(SongChart { title, artist, instrument: Instrument::Guitar, diffs, sp, beats, end })
 }

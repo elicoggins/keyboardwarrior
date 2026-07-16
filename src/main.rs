@@ -50,7 +50,7 @@ fn draw_keyboard_legend(center_x: f32, top_y: f32) {
             draw_rectangle(x, y, key, key, wa(c, 0.14));
             draw_rectangle_lines(x, y, key, key, 1.5, wa(c, 0.45));
             let label = ch.to_ascii_uppercase().to_string();
-            let d = msize(&label, 13);
+            let d = msize(&label, 13.0);
             dtext(
                 &label,
                 x + key / 2.0 - d.width / 2.0,
@@ -124,6 +124,7 @@ const THEMES: [Theme; 3] = [
 
 static THEME_IDX: AtomicUsize = AtomicUsize::new(0);
 static SENTENCE_MODE: AtomicBool = AtomicBool::new(false);
+static SUSTAINS: AtomicBool = AtomicBool::new(true);
 
 fn th() -> &'static Theme {
     &THEMES[THEME_IDX.load(Ordering::Relaxed) % THEMES.len()]
@@ -131,6 +132,10 @@ fn th() -> &'static Theme {
 
 fn sentence_mode() -> bool {
     SENTENCE_MODE.load(Ordering::Relaxed)
+}
+
+fn sustains_on() -> bool {
+    SUSTAINS.load(Ordering::Relaxed)
 }
 
 /// A theme color at a given alpha.
@@ -151,22 +156,58 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 // ---------------------------------------------------------------- typography
 
 // The built-in pixel font, everywhere — menu, HUD, gems, words.
-fn dtext(t: &str, x: f32, y: f32, size: f32, color: Color) {
-    draw_text(t, x, y, size, color);
+//
+// macroquad rasterizes glyphs per (character, pixel size) into one shared
+// atlas, and any frame that adds a glyph re-uploads the entire atlas texture
+// (and occasionally doubles it). Several text sizes here animate continuously
+// — the word queue, the combo counter, the menu wheel — which would mint new
+// pixel sizes almost every frame and stutter. So glyphs are only rasterized
+// at SIZE_STEP-quantized sizes; font_scale closes the gap by scaling the
+// cached quad, which costs nothing.
+const SIZE_STEP: f32 = 4.0;
+
+fn qsize(size: f32) -> (u16, f32) {
+    let bucket = (size / SIZE_STEP).ceil().max(1.0) * SIZE_STEP;
+    (bucket as u16, size / bucket)
 }
 
-fn msize(t: &str, size: u16) -> TextDimensions {
-    measure_text(t, None, size, 1.0)
+fn dtext(t: &str, x: f32, y: f32, size: f32, color: Color) {
+    let (font_size, font_scale) = qsize(size);
+    draw_text_ex(t, x, y, TextParams { font_size, font_scale, color, ..Default::default() });
+}
+
+fn msize(t: &str, size: f32) -> TextDimensions {
+    let (font_size, font_scale) = qsize(size);
+    measure_text(t, None, font_size, font_scale)
+}
+
+/// Rasterize every glyph the game can draw once, at startup, so the atlas
+/// never grows or re-uploads mid-song. (measure_text caches glyphs too.)
+fn prewarm_glyphs() {
+    let charset: String = (' '..='~').chain(['·']).collect();
+    let mut bucket = SIZE_STEP;
+    while bucket <= 96.0 {
+        measure_text(&charset, None, bucket as u16, 1.0);
+        bucket += SIZE_STEP;
+    }
+    // The results-screen grade is the one glyph drawn larger
+    measure_text("SABCD", None, 160, 1.0);
 }
 
 // Word pools indexed by length - 1. In WORDS mode a phrase with N notes gets
 // a word with N letters, so typing a word IS playing a lick. Pools are large
 // and dealt from a reshuffling deck, so repeats are rare and never adjacent.
 const WORDS_BY_LEN: [&[&str]; 8] = [
-    &["a", "i"],
+    // One-note phrases play every letter solo — variety beats word-ness here
+    &[
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r",
+        "s", "t", "u", "v", "w", "x", "y", "z",
+    ],
     &[
         "go", "up", "on", "we", "it", "my", "do", "so", "am", "an", "as", "at", "be", "by", "he",
-        "if", "in", "is", "me", "no", "of", "or", "to", "us",
+        "if", "in", "is", "me", "no", "of", "or", "to", "us", "ah", "aw", "ax", "ay", "bi", "bo",
+        "eh", "em", "en", "ex", "hi", "ho", "id", "la", "lo", "ma", "mu", "nu", "oh", "ok", "ow",
+        "ox", "oy", "pa", "pi", "re", "ta", "ti", "uh", "um", "un", "ya", "ye", "yo",
     ],
     &[
         "the", "and", "for", "you", "not", "are", "all", "new", "was", "can", "has", "but", "our",
@@ -441,10 +482,19 @@ enum NoteState {
 struct Note {
     ch: char,
     lane: usize,
-    time: f64, // song time in seconds when it should be typed
+    time: f64,    // song time in seconds when it should be typed
+    sustain: f64, // hold length in seconds (0 = plain tap)
     word: usize,
     sp_phrase: Option<u16>, // star power phrase this note belongs to
     state: NoteState,
+}
+
+/// A sustain currently being held: bonus score accrues while the key stays
+/// down, until the tail runs out or the finger lifts.
+struct Hold {
+    note: usize,
+    end: f64,     // timeline second the tail runs out
+    partial: f32, // fractional bonus score carried between frames
 }
 
 fn lane_of(c: char) -> usize {
@@ -460,6 +510,53 @@ fn lane_of(c: char) -> usize {
 /// Characters that can appear on gems: letters plus unshifted punctuation.
 fn is_typeable(c: char) -> bool {
     c.is_ascii_alphabetic() || matches!(c, ',' | '.' | '\'')
+}
+
+/// The physical key that types a gem character.
+fn key_of(c: char) -> Option<KeyCode> {
+    Some(match c {
+        'a' => KeyCode::A,
+        'b' => KeyCode::B,
+        'c' => KeyCode::C,
+        'd' => KeyCode::D,
+        'e' => KeyCode::E,
+        'f' => KeyCode::F,
+        'g' => KeyCode::G,
+        'h' => KeyCode::H,
+        'i' => KeyCode::I,
+        'j' => KeyCode::J,
+        'k' => KeyCode::K,
+        'l' => KeyCode::L,
+        'm' => KeyCode::M,
+        'n' => KeyCode::N,
+        'o' => KeyCode::O,
+        'p' => KeyCode::P,
+        'q' => KeyCode::Q,
+        'r' => KeyCode::R,
+        's' => KeyCode::S,
+        't' => KeyCode::T,
+        'u' => KeyCode::U,
+        'v' => KeyCode::V,
+        'w' => KeyCode::W,
+        'x' => KeyCode::X,
+        'y' => KeyCode::Y,
+        'z' => KeyCode::Z,
+        ',' => KeyCode::Comma,
+        '.' => KeyCode::Period,
+        '\'' => KeyCode::Apostrophe,
+        _ => return None,
+    })
+}
+
+/// Is the physical key for a gem character currently held down?
+fn key_down(c: char) -> bool {
+    key_of(c).is_some_and(is_key_down)
+}
+
+/// Was the character's key freshly pressed this frame? False for OS
+/// key-repeat events from a key that is merely being held.
+fn key_freshly_pressed(c: char) -> bool {
+    key_of(c).is_some_and(is_key_pressed)
 }
 
 struct Particle {
@@ -560,6 +657,7 @@ struct Play {
     cursor: usize,
     // notes index where each word starts (notes are sorted, words contiguous)
     word_starts: Vec<usize>,
+    holds: Vec<Hold>, // sustains currently being held
     paused: bool,
     pause_now: f64, // clock value frozen at the moment of pausing, for draw
     ducked: bool,   // lead stem is currently ducked after a miss
@@ -602,12 +700,37 @@ fn geom() -> Geom {
     Geom { left, width, lane_w: width / 4.0, hit_y: h * 0.78, top: 70.0 }
 }
 
-/// Stream the text's letters onto note times in order: letter k of the text
-/// rides note k. Word boundaries drive the on-screen word queue.
-fn assign_letters(words: &[String], times: &[f64]) -> Vec<Note> {
+/// Highway y for a timeline second: the strike line at `now`, the top of the
+/// highway one APPROACH later.
+fn time_to_y(t: f64, g: &Geom, now: f64) -> f32 {
+    g.hit_y - (((t - now) / APPROACH) as f32) * (g.hit_y - g.top)
+}
+
+/// The strike line, drawn as five segments with gaps at the lane centers so
+/// it never cuts through the target rings or a gem crossing it.
+fn draw_strike_line(g: &Geom, ox: f32, oy: f32, thickness: f32, color: Color) {
+    let gap = 30.0;
+    let y = g.hit_y + oy;
+    let mut x = g.left + ox;
+    for lane in 0..4 {
+        let cx = g.left + g.lane_w * (lane as f32 + 0.5) + ox;
+        if cx - gap > x {
+            draw_line(x, y, cx - gap, y, thickness, color);
+        }
+        x = cx + gap;
+    }
+    let right = g.left + g.width + ox;
+    if right > x {
+        draw_line(x, y, right, y, thickness, color);
+    }
+}
+
+/// Stream the text's letters onto note (time, sustain) pairs in order: letter
+/// k of the text rides note k. Word boundaries drive the on-screen word queue.
+fn assign_letters(words: &[String], times: &[(f64, f64)]) -> Vec<Note> {
     let mut notes = Vec::with_capacity(times.len());
     let (mut wi, mut li) = (0usize, 0usize);
-    for &t in times.iter() {
+    for &(t, len) in times.iter() {
         while wi < words.len() && li >= words[wi].len() {
             wi += 1;
             li = 0;
@@ -619,6 +742,7 @@ fn assign_letters(words: &[String], times: &[f64]) -> Vec<Note> {
             ch,
             lane: lane_of(ch),
             time: t,
+            sustain: len,
             word: wi,
             sp_phrase: None,
             state: NoteState::Pending,
@@ -640,26 +764,26 @@ impl Play {
         backing: Buf,
         lead: Option<Buf>,
     ) -> Self {
-        let times: Vec<f64> = chart.diffs[diff].iter().map(|n| n.time).collect();
+        let times: Vec<(f64, f64)> = chart.diffs[diff].iter().map(|n| (n.time, n.len)).collect();
 
         // Group notes into phrases at musical rests (or when a word maxes out)
-        let mut groups: Vec<Vec<f64>> = Vec::new();
-        for &t in &times {
+        let mut groups: Vec<Vec<(f64, f64)>> = Vec::new();
+        for &(t, len) in &times {
             let new_group = match groups.last().and_then(|g| g.last()) {
-                Some(&prev) => t - prev > 0.85 || groups.last().unwrap().len() >= 8,
+                Some(&(prev, _)) => t - prev > 0.85 || groups.last().unwrap().len() >= 8,
                 None => true,
             };
             if new_group {
                 groups.push(Vec::new());
             }
-            groups.last_mut().unwrap().push(t);
+            groups.last_mut().unwrap().push((t, len));
         }
         // Fold lonely single-note groups into the previous word when close
-        let mut merged: Vec<Vec<f64>> = Vec::new();
+        let mut merged: Vec<Vec<(f64, f64)>> = Vec::new();
         for g in groups {
             match merged.last_mut() {
                 Some(prev)
-                    if g.len() == 1 && prev.len() < 8 && g[0] - *prev.last().unwrap() < 1.6 =>
+                    if g.len() == 1 && prev.len() < 8 && g[0].0 - prev.last().unwrap().0 < 1.6 =>
                 {
                     prev.extend(g);
                 }
@@ -668,7 +792,24 @@ impl Play {
         }
 
         let group_lens: Vec<usize> = merged.iter().map(|g| g.len()).collect();
-        let flat_times: Vec<f64> = merged.concat();
+        let mut flat_times: Vec<(f64, f64)> = merged.concat();
+        // Sustains: only tails long enough to be worth holding, clipped so
+        // they never overlap the next note's press; drop them entirely when
+        // the option is off
+        for i in 0..flat_times.len() {
+            let next_t = flat_times.get(i + 1).map(|n| n.0);
+            let (t, mut len) = flat_times[i];
+            if !sustains_on() {
+                len = 0.0;
+            }
+            if let Some(nt) = next_t {
+                len = len.min(nt - t - 0.12);
+            }
+            if len < 0.3 {
+                len = 0.0;
+            }
+            flat_times[i].1 = len;
+        }
         let words = generate_text(&group_lens);
         let mut notes = assign_letters(&words, &flat_times);
 
@@ -738,6 +879,7 @@ impl Play {
             words,
             cursor: 0,
             word_starts,
+            holds: Vec::new(),
             paused: false,
             pause_now: 0.0,
             ducked: false,
@@ -787,10 +929,7 @@ impl Play {
     }
 
     fn note_pos(&self, note: &Note, g: &Geom, now: f64) -> Vec2 {
-        let x = g.left + g.lane_w * (note.lane as f32 + 0.5);
-        let progress = ((note.time - now) / APPROACH) as f32;
-        let y = g.hit_y - progress * (g.hit_y - g.top);
-        vec2(x, y)
+        vec2(g.left + g.lane_w * (note.lane as f32 + 0.5), time_to_y(note.time, g, now))
     }
 
     fn burst(&mut self, pos: Vec2, color: Color, count: usize) {
@@ -836,6 +975,11 @@ impl Play {
         }
         if now < self.first_note_time - GOOD_WIN {
             return; // still in the count-in
+        }
+        // OS key-repeat from a held key (a sustain, or just a lingering
+        // finger) is not a fresh press: it never judges and never strays
+        if !key_freshly_pressed(c) {
+            return;
         }
         let g = geom();
 
@@ -900,6 +1044,11 @@ impl Play {
                     self.burst(pos, WHITE, 6);
                 }
                 self.float_text(j.label(), vec2(pos.x, g.hit_y - 64.0), j.color(), 26.0);
+                // A sustained gem starts a hold: keep the key down for bonus
+                if self.notes[i].sustain > 0.0 {
+                    let n = &self.notes[i];
+                    self.holds.push(Hold { note: i, end: n.time + n.sustain, partial: 0.0 });
+                }
                 // A clean hit brings the ducked lead stem back into the mix
                 if self.ducked {
                     engine.set_lead_gain(1.0);
@@ -957,6 +1106,33 @@ impl Play {
                 self.ducked = true;
             }
         }
+
+        // Sustain holds: bonus score drips in while the key stays down.
+        // Lifting early just stops the bonus — no combo break, like GH.
+        let mult = self.multiplier(jnow) as f32;
+        let mut holds = std::mem::take(&mut self.holds);
+        let mut bonus = 0i64;
+        let mut done: Vec<usize> = Vec::new();
+        holds.retain_mut(|h| {
+            if jnow >= h.end {
+                done.push(h.note);
+                return false;
+            }
+            if !key_down(self.notes[h.note].ch) {
+                return false;
+            }
+            h.partial += dt * 60.0 * mult;
+            let whole = h.partial.floor();
+            h.partial -= whole;
+            bonus += whole as i64;
+            true
+        });
+        self.score += bonus;
+        for i in done {
+            let x = g.left + g.lane_w * (self.notes[i].lane as f32 + 0.5);
+            self.burst(vec2(x, g.hit_y), th().lane[self.notes[i].lane], 8);
+        }
+        self.holds = holds;
 
         // Effects
         for p in self.particles.iter_mut() {
@@ -1045,16 +1221,10 @@ impl Play {
             );
         }
 
-        // Strike line
+        // Strike line, drawn in segments that skip the lane circles so it
+        // never runs through a gem or target ring
         let flash = 0.42 + 0.14 * self.beat_flash;
-        draw_line(
-            g.left + ox,
-            g.hit_y + oy,
-            g.left + g.width + ox,
-            g.hit_y + oy,
-            4.0,
-            Color::new(1.0, 1.0, 1.0, flash),
-        );
+        draw_strike_line(&g, ox, oy, 4.0, Color::new(1.0, 1.0, 1.0, flash));
         for lane in 0..4 {
             let x = g.left + g.lane_w * (lane as f32 + 0.5) + ox;
             let mut c = th().lane[lane];
@@ -1084,6 +1254,23 @@ impl Play {
             draw_line(pa.x, pa.y, pb.x, pb.y, 2.0, Color::new(1.0, 1.0, 1.0, 0.13));
         }
 
+        // Sustain tails run from each gem up toward its release point; drawn
+        // under the gems so the gem caps the tail's base
+        for n in &self.notes[visible_lo..] {
+            if n.time - now > APPROACH {
+                break;
+            }
+            if n.sustain <= 0.0 || n.state != NoteState::Pending {
+                continue;
+            }
+            let pos = self.note_pos(n, &g, now) + vec2(ox, oy);
+            if pos.y < g.top - 40.0 || pos.y > h + 40.0 {
+                continue;
+            }
+            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(g.top - 10.0);
+            draw_line(pos.x, pos.y, pos.x, y_end, 5.0, wa(th().lane[n.lane], 0.22));
+        }
+
         // Gems
         let radius = (g.lane_w * 0.26).min(24.0);
         for n in &self.notes[visible_lo..] {
@@ -1111,7 +1298,7 @@ impl Play {
                         draw_circle_lines(pos.x, pos.y, radius + 4.0, 1.5, wa(th().accent, 0.45));
                     }
                     let label = n.ch.to_ascii_uppercase().to_string();
-                    let dims = msize(&label, 30);
+                    let dims = msize(&label, 30.0);
                     dtext(
                         &label,
                         pos.x - dims.width / 2.0,
@@ -1124,7 +1311,7 @@ impl Play {
                     draw_circle(pos.x, pos.y, radius, mix(th().bg, th().miss, 0.12));
                     draw_circle_lines(pos.x, pos.y, radius, 2.0, wa(th().miss, 0.4));
                     let label = n.ch.to_ascii_uppercase().to_string();
-                    let dims = msize(&label, 30);
+                    let dims = msize(&label, 30.0);
                     dtext(
                         &label,
                         pos.x - dims.width / 2.0,
@@ -1137,6 +1324,18 @@ impl Play {
             }
         }
 
+        // Active holds: the remaining tail drains into a glowing anchor on
+        // the strike line while the key stays down
+        for hd in &self.holds {
+            let n = &self.notes[hd.note];
+            let x = g.left + g.lane_w * (n.lane as f32 + 0.5) + ox;
+            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(g.top - 10.0);
+            let c = th().lane[n.lane];
+            draw_line(x, g.hit_y + oy, x, y_end, 7.0, wa(c, 0.75));
+            draw_circle(x, g.hit_y + oy, 12.0, wa(c, 0.9));
+            draw_circle_lines(x, g.hit_y + oy, 19.0 + 3.0 * self.beat_flash, 2.0, wa(c, 0.6));
+        }
+
         // Particles & floaters
         for p in &self.particles {
             let mut c = p.color;
@@ -1146,13 +1345,22 @@ impl Play {
         for f in &self.floaters {
             let mut c = f.color;
             c.a = (f.life / 0.8).clamp(0.0, 1.0);
-            let dims = msize(&f.text, f.size as u16);
+            let dims = msize(&f.text, f.size);
             dtext(&f.text, f.pos.x - dims.width / 2.0 + ox, f.pos.y + oy, f.size, c);
         }
 
         // Word queue below the strike line: the current word large with live
         // per-letter results, upcoming words stacked beneath it smaller and
-        // dimmer, everything easing upward as words complete
+        // dimmer, everything easing upward as words complete. The next letter
+        // to type is subtly larger and underlined so a lost eye can re-anchor.
+        let next_letter: Option<(usize, usize)> = self.notes[self.cursor..]
+            .iter()
+            .position(|n| n.state == NoteState::Pending)
+            .map(|off| {
+                let i = self.cursor + off;
+                let w = self.notes[i].word;
+                (w, i - self.word_starts[w])
+            });
         let first_row = (self.word_anim.floor().max(0.0)) as usize;
         for wi in first_row..self.words.len() {
             let offset = wi as f32 - self.word_anim;
@@ -1175,10 +1383,10 @@ impl Play {
             let we = self.word_starts.get(wi + 1).copied().unwrap_or(self.notes.len());
             let letter_states = &self.notes[ws.min(we)..we];
             let gap = 6.0 - 2.5 * depth;
-            let total_w: f32 =
-                word.chars().map(|c| msize(&c.to_string(), size as u16).width + gap).sum();
+            let total_w: f32 = word.chars().map(|c| msize(&c.to_string(), size).width + gap).sum();
             let mut x = g.left + g.width / 2.0 - total_w / 2.0 + ox;
             for (i, c) in word.chars().enumerate() {
+                let up_next = next_letter == Some((wi, i));
                 let mut color = match letter_states.get(i).map(|n| n.state) {
                     Some(NoteState::Hit(j)) => {
                         let mut c = j.color();
@@ -1186,12 +1394,18 @@ impl Play {
                         c
                     }
                     Some(NoteState::Missed) => wa(th().miss, 0.9),
+                    _ if up_next => Color::new(1.0, 1.0, 1.0, 0.95),
                     _ => Color::new(1.0, 1.0, 1.0, 0.55),
                 };
                 color.a *= row_alpha;
                 let s = c.to_string();
                 dtext(&s, x, y, size, color);
-                x += msize(&s, size as u16).width + gap;
+                let w = msize(&s, size).width;
+                if up_next {
+                    // Soft accent underline marks where to re-anchor
+                    draw_line(x, y + 7.0, x + w, y + 7.0, 2.0, wa(th().accent, 0.7 * row_alpha));
+                }
+                x += w + gap;
             }
         }
 
@@ -1205,14 +1419,7 @@ impl Play {
         let sp_on = self.sp_active(now);
         if sp_on {
             draw_rectangle(g.left + ox, 0.0, g.width, h, wa(th().accent, 0.05));
-            draw_line(
-                g.left + ox,
-                g.hit_y + oy,
-                g.left + g.width + ox,
-                g.hit_y + oy,
-                4.0,
-                wa(th().accent, 0.8),
-            );
+            draw_strike_line(&g, ox, oy, 4.0, wa(th().accent, 0.8));
         }
         if self.energy > 0.0 || sp_on {
             let bar_w = 180.0;
@@ -1240,7 +1447,7 @@ impl Play {
         let mult_color = if sp_on { wa(th().accent, 1.0) } else { wa(th().accent, 0.9) };
         dtext(&format!("x{}", self.multiplier(now)), 24.0, 72.0, 24.0, mult_color);
         let acc_text = format!("{:>5.1} %", self.accuracy());
-        let ad = msize(&acc_text, 26);
+        let ad = msize(&acc_text, 26.0);
         dtext(
             &acc_text,
             screen_width() - ad.width - 24.0,
@@ -1249,7 +1456,7 @@ impl Play {
             Color::new(1.0, 1.0, 1.0, 0.85),
         );
         let song_text = format!("{}  ·  {}", self.title, self.diff_name);
-        let sd = msize(&song_text, 18);
+        let sd = msize(&song_text, 18.0);
         dtext(
             &song_text,
             screen_width() - sd.width - 24.0,
@@ -1262,7 +1469,7 @@ impl Play {
         if self.combo >= 4 {
             let text = format!("{}", self.combo);
             let size = 64.0 + (self.combo.min(60) as f32) * 0.4;
-            let dims = msize(&text, size as u16);
+            let dims = msize(&text, size);
             dtext(
                 &text,
                 g.left + g.width / 2.0 - dims.width / 2.0 + ox,
@@ -1280,7 +1487,7 @@ impl Play {
             } else {
                 format!("{}", beats_left.ceil() as i64)
             };
-            let dims = msize(&text, 80);
+            let dims = msize(&text, 80.0);
             dtext(
                 &text,
                 g.left + g.width / 2.0 - dims.width / 2.0,
@@ -1329,8 +1536,37 @@ impl Results {
 }
 
 fn draw_centered(text: &str, y: f32, size: f32, color: Color) {
-    let dims = msize(text, size as u16);
+    let dims = msize(text, size);
     dtext(text, screen_width() / 2.0 - dims.width / 2.0, y, size, color);
+}
+
+// ---------------------------------------------------------------- diagnostics
+
+const FRAME_LOG_LEN: usize = 240;
+
+/// F1 overlay: recent frame times as 1px bars against a 60 fps reference
+/// line, with the worst frame in the window called out. Spikes paint red.
+fn draw_frame_graph(log: &std::collections::VecDeque<f32>) {
+    let (w, h) = (FRAME_LOG_LEN as f32, 64.0);
+    let x0 = 14.0;
+    let y1 = screen_height() - 14.0;
+    let scale = h / 0.034; // graph top ≈ 34 ms, two 60 Hz frames
+    draw_rectangle(x0 - 6.0, y1 - h - 6.0, w + 12.0, h + 12.0, Color::new(0.0, 0.0, 0.0, 0.55));
+    for (i, &dt) in log.iter().enumerate() {
+        let bh = (dt * scale).clamp(1.0, h);
+        let c = if dt > 1.0 / 45.0 { th().miss } else { th().secondary };
+        draw_rectangle(x0 + i as f32, y1 - bh, 1.0, bh, wa(c, 0.9));
+    }
+    let y60 = y1 - scale / 60.0;
+    draw_line(x0, y60, x0 + w, y60, 1.0, Color::new(1.0, 1.0, 1.0, 0.4));
+    let worst = log.iter().copied().fold(0.0f32, f32::max);
+    dtext(
+        &format!("{} fps   worst {:.1} ms", get_fps(), worst * 1000.0),
+        x0,
+        y1 - h - 14.0,
+        16.0,
+        Color::new(1.0, 1.0, 1.0, 0.8),
+    );
 }
 
 // ---------------------------------------------------------------- main
@@ -1516,6 +1752,7 @@ fn window_conf() -> Conf {
 #[macroquad::main(window_conf)]
 async fn main() {
     macroquad::rand::srand(macroquad::miniquad::date::now() as u64);
+    prewarm_glyphs();
     let engine = AudioEngine::new();
     let sounds = make_sounds(engine.sample_rate);
     let (songs, scan_errors) = chart::scan_songs(std::path::Path::new("songs"));
@@ -1535,10 +1772,22 @@ async fn main() {
         }
     }
 
+    // Frame-time overlay (F1), for chasing stutter by eye
+    let mut show_frame_graph = false;
+    let mut frame_log: std::collections::VecDeque<f32> =
+        std::collections::VecDeque::with_capacity(FRAME_LOG_LEN);
+
     loop {
         // Buffers the audio callback retired get freed here, off the
         // real-time thread
         engine.reap();
+        if is_key_pressed(KeyCode::F1) {
+            show_frame_graph = !show_frame_graph;
+        }
+        if frame_log.len() == FRAME_LOG_LEN {
+            frame_log.pop_front();
+        }
+        frame_log.push_back(get_frame_time());
         match &mut scene {
             Scene::Menu { sel, diff_sel, scroll } => {
                 let rows = songs.len();
@@ -1593,6 +1842,10 @@ async fn main() {
                 }
                 if is_key_pressed(KeyCode::M) {
                     SENTENCE_MODE.store(!sentence_mode(), Ordering::Relaxed);
+                    engine.play(&sounds.kick, 0.4);
+                }
+                if is_key_pressed(KeyCode::S) {
+                    SUSTAINS.store(!sustains_on(), Ordering::Relaxed);
                     engine.play(&sounds.kick, 0.4);
                 }
                 if is_key_pressed(KeyCode::C) {
@@ -1680,7 +1933,7 @@ async fn main() {
                         Color::new(1.0, 1.0, 1.0, 0.45 * a)
                     };
                     if selected {
-                        let dims = msize(title, size as u16);
+                        let dims = msize(title, size);
                         dtext(
                             ">",
                             screen_width() / 2.0 - dims.width / 2.0 - 40.0,
@@ -1734,12 +1987,14 @@ async fn main() {
                     wa(th().accent, 0.45),
                 );
                 let text_mode = if sentence_mode() { "SENTENCES" } else { "WORDS" };
+                let sus = if sustains_on() { "ON" } else { "OFF" };
                 let off_ms = CALIB_MS.load(Ordering::Relaxed);
                 draw_centered(
                     &format!(
-                        "M — text: {}    ·    T — theme: {}    ·    C — calibrate ({off_ms:+} ms)",
+                        "M — text: {}   ·   T — theme: {}   ·   S — sustains: {}   ·   C — calibrate ({off_ms:+} ms)",
                         text_mode,
-                        th().name
+                        th().name,
+                        sus
                     ),
                     hint_y + 56.0,
                     20.0,
@@ -2018,7 +2273,7 @@ async fn main() {
                     15.0,
                     Color::new(1.0, 1.0, 1.0, 0.3),
                 );
-                let ld = msize("late", 15);
+                let ld = msize("late", 15.0);
                 dtext(
                     "late",
                     cx + aw / 2.0 - ld.width + 4.0,
@@ -2058,6 +2313,9 @@ async fn main() {
             }
         }
 
+        if show_frame_graph {
+            draw_frame_graph(&frame_log);
+        }
         next_frame().await;
     }
 }
