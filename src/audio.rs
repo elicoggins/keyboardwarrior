@@ -44,6 +44,8 @@ enum Cmd {
     },
     /// Duck or restore the lead stem (smoothed in the callback).
     SetLeadGain(f32),
+    /// Whammy amount 0..1: pitch-wobbles the lead stem while engaged.
+    SetWhammy(f32),
     /// Freeze or resume the timeline (and everything scheduled on it).
     SetPaused(bool),
     StopTimeline,
@@ -63,6 +65,9 @@ struct Timeline {
     lead: Option<Buf>,
     lead_gain: f32,
     lead_target: f32,
+    whammy: f32, // smoothed toward whammy_target in the callback
+    whammy_target: f32,
+    whammy_phase: f32,
     paused: bool,
 }
 
@@ -162,6 +167,12 @@ impl AudioEngine {
 
     pub fn set_lead_gain(&self, gain: f32) {
         let _ = self.tx.send(Cmd::SetLeadGain(gain));
+    }
+
+    /// Engage or release the whammy bar (0..1). The callback bends the lead
+    /// stem's pitch with a slow vibrato while it's engaged.
+    pub fn set_whammy(&self, amt: f32) {
+        let _ = self.tx.send(Cmd::SetWhammy(amt));
     }
 
     /// Freeze or resume the timeline. While paused the callback advances the
@@ -265,12 +276,20 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                                 lead,
                                 lead_gain: 1.0,
                                 lead_target: 1.0,
+                                whammy: 0.0,
+                                whammy_target: 0.0,
+                                whammy_phase: 0.0,
                                 paused: false,
                             });
                         }
                         Cmd::SetLeadGain(g) => {
                             if let Some(t) = timeline.as_mut() {
                                 t.lead_target = g;
+                            }
+                        }
+                        Cmd::SetWhammy(a) => {
+                            if let Some(t) = timeline.as_mut() {
+                                t.whammy_target = a.clamp(0.0, 1.0);
                             }
                         }
                         Cmd::SetPaused(p) => {
@@ -289,6 +308,11 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                 let nframes = out.len() / channels;
                 // ~8 ms exponential gain smoothing for the lead stem
                 let gain_k = 1.0 - (-1.0 / (0.008 * sample_rate as f32)).exp();
+                // Whammy vibrato: ~40 ms depth ramp, 4.6 Hz wobble, up to
+                // ~8 ms of modulated delay (~2 semitones of bend at peak)
+                let whammy_k = 1.0 - (-1.0 / (0.04 * sample_rate as f32)).exp();
+                let whammy_step = std::f32::consts::TAU * 4.6 / sample_rate as f32;
+                let whammy_depth = 0.008 * sample_rate as f32;
                 let paused = timeline.as_ref().is_some_and(|t| t.paused);
 
                 for i in 0..nframes {
@@ -299,18 +323,39 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     if let Some(t) = timeline.as_mut() {
                         if !t.paused && gf >= t.start_frame {
                             let idx = (gf - t.start_frame) as usize;
+                            // Whammy: a sine-modulated delay on the read
+                            // position — a true pitch vibrato. The phase
+                            // rests at zero (zero delay) when released, so
+                            // engaging never clicks.
+                            t.whammy += (t.whammy_target - t.whammy) * whammy_k;
+                            let bend = t.whammy > 0.001;
+                            let delay = if bend {
+                                t.whammy_phase =
+                                    (t.whammy_phase + whammy_step) % std::f32::consts::TAU;
+                                (1.0 - t.whammy_phase.cos()) * 0.5 * t.whammy * whammy_depth
+                            } else {
+                                t.whammy_phase = 0.0;
+                                0.0
+                            };
                             if let Some(b) = &t.backing {
-                                if let Some(s) = b.get(idx) {
-                                    l += s[0];
-                                    r += s[1];
-                                }
+                                // No separate lead stem: bend the whole mix
+                                let s = if bend && t.lead.is_none() {
+                                    sample_at(b, idx as f64 - delay as f64)
+                                } else {
+                                    b.get(idx).copied().unwrap_or([0.0; 2])
+                                };
+                                l += s[0];
+                                r += s[1];
                             }
                             t.lead_gain += (t.lead_target - t.lead_gain) * gain_k;
                             if let Some(ld) = &t.lead {
-                                if let Some(s) = ld.get(idx) {
-                                    l += s[0] * t.lead_gain;
-                                    r += s[1] * t.lead_gain;
-                                }
+                                let s = if bend {
+                                    sample_at(ld, idx as f64 - delay as f64)
+                                } else {
+                                    ld.get(idx).copied().unwrap_or([0.0; 2])
+                                };
+                                l += s[0] * t.lead_gain;
+                                r += s[1] * t.lead_gain;
                             }
                         }
                     }
@@ -358,6 +403,19 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
             None,
         )
         .expect("failed to build audio stream")
+}
+
+/// Read a stereo buffer at a fractional frame position, linearly
+/// interpolated — the whammy's modulated delay lands between samples.
+fn sample_at(buf: &[[f32; 2]], pos: f64) -> [f32; 2] {
+    if pos < 0.0 {
+        return [0.0, 0.0];
+    }
+    let i = pos as usize;
+    let frac = (pos - i as f64) as f32;
+    let a = buf.get(i).copied().unwrap_or([0.0; 2]);
+    let b = buf.get(i + 1).copied().unwrap_or(a);
+    [a[0] + (b[0] - a[0]) * frac, a[1] + (b[1] - a[1]) * frac]
 }
 
 fn soft_clip(x: f32) -> f32 {

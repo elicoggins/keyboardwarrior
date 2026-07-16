@@ -167,7 +167,9 @@ fn mix(a: Color, b: Color, t: f32) -> Color {
 const SIZE_STEP: f32 = 4.0;
 
 fn qsize(size: f32) -> (u16, f32) {
-    let bucket = (size / SIZE_STEP).ceil().max(1.0) * SIZE_STEP;
+    // Bucket capped at 200 px: a corrupt/huge size scales a cached quad up
+    // instead of rasterizing a giant glyph that would explode the atlas
+    let bucket = (size / SIZE_STEP).ceil().clamp(1.0, 50.0) * SIZE_STEP;
     (bucket as u16, size / bucket)
 }
 
@@ -658,6 +660,7 @@ struct Play {
     // notes index where each word starts (notes are sorted, words contiguous)
     word_starts: Vec<usize>,
     holds: Vec<Hold>, // sustains currently being held
+    whammying: bool,  // SHIFT is bending an active sustain
     paused: bool,
     pause_now: f64, // clock value frozen at the moment of pausing, for draw
     ducked: bool,   // lead stem is currently ducked after a miss
@@ -880,6 +883,7 @@ impl Play {
             cursor: 0,
             word_starts,
             holds: Vec::new(),
+            whammying: false,
             paused: false,
             pause_now: 0.0,
             ducked: false,
@@ -1109,7 +1113,10 @@ impl Play {
 
         // Sustain holds: bonus score drips in while the key stays down.
         // Lifting early just stops the bonus — no combo break, like GH.
-        let mult = self.multiplier(jnow) as f32;
+        // SHIFT is the whammy bar: it bends the lead's pitch, doubles the
+        // drip, and trickles star power while a sustain is held.
+        let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+        let mult = self.multiplier(jnow) as f32 * if shift { 2.0 } else { 1.0 };
         let mut holds = std::mem::take(&mut self.holds);
         let mut bonus = 0i64;
         let mut done: Vec<usize> = Vec::new();
@@ -1133,6 +1140,14 @@ impl Play {
             self.burst(vec2(x, g.hit_y), th().lane[self.notes[i].lane], 8);
         }
         self.holds = holds;
+        let whammy = shift && !self.holds.is_empty();
+        if whammy {
+            self.energy = (self.energy + dt * 0.05).min(1.0);
+        }
+        if whammy != self.whammying {
+            self.whammying = whammy;
+            engine.set_whammy(if whammy { 1.0 } else { 0.0 });
+        }
 
         // Effects
         for p in self.particles.iter_mut() {
@@ -1325,13 +1340,27 @@ impl Play {
         }
 
         // Active holds: the remaining tail drains into a glowing anchor on
-        // the strike line while the key stays down
+        // the strike line while the key stays down; the whammy bends the
+        // tail into a wobble
         for hd in &self.holds {
             let n = &self.notes[hd.note];
             let x = g.left + g.lane_w * (n.lane as f32 + 0.5) + ox;
             let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(g.top - 10.0);
             let c = th().lane[n.lane];
-            draw_line(x, g.hit_y + oy, x, y_end, 7.0, wa(c, 0.75));
+            if self.whammying {
+                let t = get_time() as f32;
+                let mut prev = vec2(x, g.hit_y + oy);
+                let mut yy = g.hit_y + oy - 9.0;
+                while yy > y_end {
+                    let p = vec2(x + (yy * 0.11 + t * 26.0).sin() * 5.0, yy);
+                    draw_line(prev.x, prev.y, p.x, p.y, 7.0, wa(c, 0.75));
+                    prev = p;
+                    yy -= 9.0;
+                }
+                draw_line(prev.x, prev.y, x, y_end, 7.0, wa(c, 0.75));
+            } else {
+                draw_line(x, g.hit_y + oy, x, y_end, 7.0, wa(c, 0.75));
+            }
             draw_circle(x, g.hit_y + oy, 12.0, wa(c, 0.9));
             draw_circle_lines(x, g.hit_y + oy, 19.0 + 3.0 * self.beat_flash, 2.0, wa(c, 0.6));
         }
@@ -1409,22 +1438,28 @@ impl Play {
             }
         }
 
-        // Progress bar
-        let resolved = self.notes.iter().filter(|n| n.state != NoteState::Pending).count();
-        let frac = resolved as f32 / self.notes.len().max(1) as f32;
-        draw_rectangle(g.left, 58.0, g.width, 3.0, Color::new(1.0, 1.0, 1.0, 0.12));
-        draw_rectangle(g.left, 58.0, g.width * frac, 3.0, wa(th().secondary, 0.8));
+        // Side-gutter HUD: the score column lives in the left gutter, the
+        // song column in the right — nothing overlays the highway. Text
+        // shrinks to fit the gutter so long titles never spill onto it.
+        let lcx = g.left / 2.0;
+        let rcx = g.left + g.width + (screen_width() - g.left - g.width) / 2.0;
+        let col_w = (g.left - 28.0).max(60.0);
+        let sp_on = self.sp_active(now);
+
+        draw_fit("SCORE", lcx, 106.0, 15.0, col_w, Color::new(1.0, 1.0, 1.0, 0.35));
+        draw_fit(&format!("{}", self.score), lcx, 146.0, 42.0, col_w, WHITE);
+        let mult_color = if sp_on { wa(th().accent, 1.0) } else { wa(th().accent, 0.9) };
+        draw_fit(&format!("x{}", self.multiplier(now)), lcx, 180.0, 24.0, col_w, mult_color);
 
         // Star power: gold wash while active, energy meter when banked
-        let sp_on = self.sp_active(now);
         if sp_on {
             draw_rectangle(g.left + ox, 0.0, g.width, h, wa(th().accent, 0.05));
             draw_strike_line(&g, ox, oy, 4.0, wa(th().accent, 0.8));
         }
         if self.energy > 0.0 || sp_on {
-            let bar_w = 180.0;
-            let bx = 24.0;
-            let by = 96.0;
+            let bar_w = col_w.min(170.0);
+            let bx = lcx - bar_w / 2.0;
+            let by = 208.0;
             draw_rectangle(bx, by, bar_w, 8.0, Color::new(1.0, 1.0, 1.0, 0.12));
             let fill = if sp_on {
                 ((self.sp_until - now) / 16.0).clamp(0.0, 1.0) as f32
@@ -1438,32 +1473,23 @@ impl Play {
             };
             draw_rectangle(bx, by, bar_w * fill, 8.0, c);
             if self.energy >= 0.5 && !sp_on {
-                dtext("SPACE: star power", bx, by + 24.0, 16.0, wa(th().accent, 0.8));
+                draw_fit("SPACE: star power", lcx, by + 26.0, 16.0, col_w, wa(th().accent, 0.8));
             }
         }
 
-        // HUD
-        dtext(&format!("{}", self.score), 24.0, 42.0, 38.0, WHITE);
-        let mult_color = if sp_on { wa(th().accent, 1.0) } else { wa(th().accent, 0.9) };
-        dtext(&format!("x{}", self.multiplier(now)), 24.0, 72.0, 24.0, mult_color);
-        let acc_text = format!("{:>5.1} %", self.accuracy());
-        let ad = msize(&acc_text, 26.0);
-        dtext(
-            &acc_text,
-            screen_width() - ad.width - 24.0,
-            40.0,
-            26.0,
-            Color::new(1.0, 1.0, 1.0, 0.85),
-        );
-        let song_text = format!("{}  ·  {}", self.title, self.diff_name);
-        let sd = msize(&song_text, 18.0);
-        dtext(
-            &song_text,
-            screen_width() - sd.width - 24.0,
-            64.0,
-            18.0,
-            Color::new(1.0, 1.0, 1.0, 0.4),
-        );
+        draw_fit(&self.title, rcx, 106.0, 22.0, col_w, Color::new(1.0, 1.0, 1.0, 0.85));
+        draw_fit(&self.diff_name, rcx, 130.0, 16.0, col_w, Color::new(1.0, 1.0, 1.0, 0.45));
+        let acc_text = format!("{:.1} %", self.accuracy());
+        draw_fit(&acc_text, rcx, 174.0, 30.0, col_w, Color::new(1.0, 1.0, 1.0, 0.85));
+
+        // Song completion, down in the right gutter instead of across the top
+        let resolved = self.notes.iter().filter(|n| n.state != NoteState::Pending).count();
+        let frac = resolved as f32 / self.notes.len().max(1) as f32;
+        let pw = col_w.min(170.0);
+        draw_rectangle(rcx - pw / 2.0, 204.0, pw, 4.0, Color::new(1.0, 1.0, 1.0, 0.12));
+        draw_rectangle(rcx - pw / 2.0, 204.0, pw * frac, 4.0, wa(th().secondary, 0.8));
+        let pct = format!("{:.0}%", frac * 100.0);
+        draw_fit(&pct, rcx, 228.0, 15.0, col_w, Color::new(1.0, 1.0, 1.0, 0.4));
 
         // Combo
         if self.combo >= 4 {
@@ -1538,6 +1564,18 @@ impl Results {
 fn draw_centered(text: &str, y: f32, size: f32, color: Color) {
     let dims = msize(text, size);
     dtext(text, screen_width() / 2.0 - dims.width / 2.0, y, size, color);
+}
+
+/// Text centered on a column, shrunk to fit its width — the side-gutter HUD
+/// uses this so nothing spills onto the highway.
+fn draw_fit(text: &str, cx: f32, y: f32, size: f32, max_w: f32, color: Color) {
+    let mut s = size;
+    let d = msize(text, s);
+    if d.width > max_w {
+        s *= max_w / d.width;
+    }
+    let d = msize(text, s);
+    dtext(text, cx - d.width / 2.0, y, s, color);
 }
 
 // ---------------------------------------------------------------- diagnostics
@@ -1901,56 +1939,64 @@ async fn main() {
                     draw_centered(&format!("!  {err}"), 205.0, 17.0, wa(th().miss, 0.85));
                 }
 
-                // The song list is a wheel: the selected row eases to the
-                // center of the band and rows fade/shrink with distance, so a
-                // large library scrolls while the bottom UI never moves.
+                // The song list is a wheel of bare titles, so many songs fit
+                // in the band: the selected row expands in place to show the
+                // artist and difficulty selector, pushing its neighbors
+                // apart, and everything eases as the selection moves.
                 let dtf = get_frame_time();
                 *scroll += (*sel as f32 - *scroll) * (1.0 - (-dtf * 12.0).exp());
                 let hint_top = screen_height() - 130.0 - 122.0; // keyboard legend top
                 let band_top = 222.0;
                 let band_bot = hint_top - 26.0;
                 let cy = (band_top + band_bot) / 2.0;
-                let spacing = 92.0;
+                let spacing = 46.0;
+                let expand = 76.0; // extra room the selected row's details take
                 for (row, song) in songs.iter().enumerate() {
                     let off = row as f32 - *scroll;
-                    let y = cy + off * spacing;
+                    // Rows below the selection shift down by the expansion;
+                    // centering it keeps the selected title on the band's axis
+                    let shift = expand * (off + 0.5).clamp(0.0, 1.0) - expand / 2.0;
+                    let y = cy + off * spacing + shift;
                     if y < band_top - 24.0 || y > band_bot + 24.0 {
                         continue;
                     }
                     // Wheel opacity: fade with distance from the center and
                     // extinguish completely at the band edges
                     let edge = (((y - band_top) / 70.0).min((band_bot - y) / 70.0)).clamp(0.0, 1.0);
-                    let a = (1.0 - off.abs() / 3.4).clamp(0.0, 1.0) * edge;
+                    let a = (1.0 - off.abs() / 6.0).clamp(0.0, 1.0) * edge;
                     if a <= 0.02 {
                         continue;
                     }
-                    let size = 40.0 - 6.0 * off.abs().min(2.0);
+                    // How settled the selection is on this row: grows the
+                    // title and fades the details in as the wheel eases
+                    let focus = (1.0 - off.abs()).clamp(0.0, 1.0);
                     let selected = row == *sel;
-                    let (title, subtitle) = (&song.title, &song.artist);
+                    let size = 26.0 + 14.0 * focus;
                     let name_color = if selected {
                         wa(th().secondary, a)
                     } else {
-                        Color::new(1.0, 1.0, 1.0, 0.45 * a)
+                        Color::new(1.0, 1.0, 1.0, (0.40 + 0.15 * focus) * a)
                     };
                     if selected {
-                        let dims = msize(title, size);
+                        let dims = msize(&song.title, size);
                         dtext(
                             ">",
                             screen_width() / 2.0 - dims.width / 2.0 - 40.0,
                             y,
                             size,
-                            Color::new(1.0, 1.0, 1.0, (0.5 + 0.5 * pulse) * a),
+                            Color::new(1.0, 1.0, 1.0, (0.5 + 0.5 * pulse) * a * focus),
                         );
                     }
-                    draw_centered(title, y, size, name_color);
-                    draw_centered(
-                        subtitle,
-                        y + 24.0,
-                        18.0,
-                        Color::new(1.0, 1.0, 1.0, if selected { 0.55 * a } else { 0.25 * a }),
-                    );
-                    if selected {
-                        // Difficulty selector for this row
+                    draw_centered(&song.title, y, size, name_color);
+                    if selected && focus > 0.05 {
+                        let fa = focus * a;
+                        draw_centered(
+                            &song.artist,
+                            y + 26.0,
+                            18.0,
+                            Color::new(1.0, 1.0, 1.0, 0.55 * fa),
+                        );
+                        // Difficulty selector, only for the selected song
                         let joined: Vec<String> =
                             diff_opts
                                 .iter()
@@ -1965,9 +2011,9 @@ async fn main() {
                                 .collect();
                         draw_centered(
                             &joined.join("   "),
-                            y + 48.0,
+                            y + 52.0,
                             20.0,
-                            wa(th().accent, 0.85 * a),
+                            wa(th().accent, 0.85 * fa),
                         );
                     }
                 }
@@ -1981,7 +2027,7 @@ async fn main() {
                     Color::new(1.0, 1.0, 1.0, 0.45),
                 );
                 draw_centered(
-                    "gold gems build star power  ·  SPACE unleashes it for 2x score",
+                    "gold gems build star power  ·  SPACE unleashes it  ·  SHIFT whammies sustains",
                     hint_y + 28.0,
                     20.0,
                     wa(th().accent, 0.45),
