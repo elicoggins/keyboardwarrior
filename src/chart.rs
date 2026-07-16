@@ -57,7 +57,7 @@ impl TempoMap {
     /// `tempos`: (tick, microseconds per quarter note); `tpq`: ticks/quarter.
     fn new(mut tempos: Vec<(u64, f64)>, tpq: f64) -> Self {
         tempos.sort_by_key(|t| t.0);
-        if tempos.first().map_or(true, |t| t.0 > 0) {
+        if tempos.first().is_none_or(|t| t.0 > 0) {
             tempos.insert(0, (0, 500_000.0)); // 120 BPM default
         }
         let mut points = Vec::new();
@@ -92,11 +92,11 @@ fn beats_until(map: &TempoMap, tpq: f64, max_tick: u64) -> Vec<f64> {
 
 // ---------------------------------------------------------------- .mid
 
-pub fn parse_mid(bytes: &[u8], delay: f64) -> Option<SongChart> {
-    let smf = midly::Smf::parse(bytes).ok()?;
+pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
+    let smf = midly::Smf::parse(bytes).map_err(|e| format!("bad MIDI: {e}"))?;
     let tpq = match smf.header.timing {
         midly::Timing::Metrical(t) => t.as_int() as f64,
-        _ => return None,
+        _ => return Err("SMPTE-timed MIDI is not supported".into()),
     };
 
     // Tempo events can appear in any track (normally the first)
@@ -143,11 +143,12 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Option<SongChart> {
                             notes.push((tick, k));
                         }
                     }
-                    midly::MidiMessage::NoteOn { key, .. } | midly::MidiMessage::NoteOff { key, .. } => {
-                        if key.as_int() == 116 {
-                            if let Some(s) = sp_start.take() {
-                                local_sp.push((s, tick));
-                            }
+                    midly::MidiMessage::NoteOn { key, .. }
+                    | midly::MidiMessage::NoteOff { key, .. }
+                        if key.as_int() == 116 =>
+                    {
+                        if let Some(s) = sp_start.take() {
+                            local_sp.push((s, tick));
                         }
                     }
                     _ => {}
@@ -167,7 +168,8 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Option<SongChart> {
     }
     let best = candidates
         .into_iter()
-        .min_by(|a, b| a.first.cmp(&b.first).then(b.notes.len().cmp(&a.notes.len())))?;
+        .min_by(|a, b| a.first.cmp(&b.first).then(b.notes.len().cmp(&a.notes.len())))
+        .ok_or("no PART GUITAR or PART BASS track with notes")?;
 
     let mut diffs: [Vec<ChartNote>; 4] = Default::default();
     let mut max_tick = 0u64;
@@ -182,28 +184,22 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Option<SongChart> {
         };
         max_tick = max_tick.max(t);
         // Collapse chords: one gem per tick
-        if diffs[d].last().map_or(true, |n: &ChartNote| n.time < map.sec(t) + delay - 1e-9) {
+        if diffs[d].last().is_none_or(|n: &ChartNote| n.time < map.sec(t) + delay - 1e-9) {
             diffs[d].push(ChartNote { time: map.sec(t) + delay });
         }
     }
     let sp_spans = best.sp;
     if diffs.iter().all(|d| d.is_empty()) {
-        return None;
+        return Err("no notes in any difficulty".into());
     }
 
-    let sp_secs: Vec<(f64, f64)> = sp_spans
-        .iter()
-        .map(|&(a, b)| (map.sec(a) + delay, map.sec(b) + delay))
-        .collect();
+    let sp_secs: Vec<(f64, f64)> =
+        sp_spans.iter().map(|&(a, b)| (map.sec(a) + delay, map.sec(b) + delay)).collect();
     let sp = [sp_secs.clone(), sp_secs.clone(), sp_secs.clone(), sp_secs];
 
     let beats = beats_until(&map, tpq, max_tick + (tpq as u64) * 8);
-    let end = diffs
-        .iter()
-        .flat_map(|d| d.last())
-        .map(|n| n.time)
-        .fold(0.0, f64::max);
-    Some(SongChart {
+    let end = diffs.iter().flat_map(|d| d.last()).map(|n| n.time).fold(0.0, f64::max);
+    Ok(SongChart {
         title: String::new(),
         artist: String::new(),
         instrument: best.instrument,
@@ -216,7 +212,7 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Option<SongChart> {
 
 // ---------------------------------------------------------------- .chart
 
-pub fn parse_chart(text: &str, delay: f64) -> Option<SongChart> {
+pub fn parse_chart(text: &str, delay: f64) -> Result<SongChart, String> {
     // Split into [Section] { ... } blocks
     let mut sections: Vec<(String, Vec<&str>)> = Vec::new();
     let mut current: Option<(String, Vec<&str>)> = None;
@@ -260,7 +256,8 @@ pub fn parse_chart(text: &str, delay: f64) -> Option<SongChart> {
             let Some((tick, rest)) = l.split_once('=') else { continue };
             let parts: Vec<&str> = rest.split_whitespace().collect();
             if parts.len() >= 2 && parts[0] == "B" {
-                if let (Ok(t), Ok(bpm1000)) = (tick.trim().parse::<u64>(), parts[1].parse::<f64>()) {
+                if let (Ok(t), Ok(bpm1000)) = (tick.trim().parse::<u64>(), parts[1].parse::<f64>())
+                {
                     tempos.push((t, 60e6 / (bpm1000 / 1000.0)));
                 }
             }
@@ -294,17 +291,13 @@ pub fn parse_chart(text: &str, delay: f64) -> Option<SongChart> {
         }
     }
     if diffs.iter().all(|d| d.is_empty()) {
-        return None;
+        return Err("no [..Single] guitar sections with notes".into());
     }
 
     let beats = beats_until(&map, resolution, max_tick + resolution as u64 * 8);
-    let end = diffs
-        .iter()
-        .flat_map(|d| d.last())
-        .map(|n| n.time)
-        .fold(0.0, f64::max);
+    let end = diffs.iter().flat_map(|d| d.last()).map(|n| n.time).fold(0.0, f64::max);
     // The .chart "Single" track is lead guitar by definition
-    Some(SongChart { title, artist, instrument: Instrument::Guitar, diffs, sp, beats, end })
+    Ok(SongChart { title, artist, instrument: Instrument::Guitar, diffs, sp, beats, end })
 }
 
 // ---------------------------------------------------------------- loading
@@ -325,25 +318,30 @@ fn meta_from_pairs<'a>(pairs: impl Iterator<Item = (&'a str, &'a str)>) -> (Stri
     (title, artist, delay)
 }
 
-pub fn load_song(source: &SongSource) -> Option<SongChart> {
+pub fn load_song(source: &SongSource) -> Result<SongChart, String> {
     let (title, artist, delay, mid, chart_text) = match source {
         SongSource::Folder(dir) => {
             let ini = std::fs::read_to_string(dir.join("song.ini")).unwrap_or_default();
             let (t, a, d) = meta_from_pairs(ini.lines().filter_map(|l| l.split_once('=')));
-            (
-                t,
-                a,
-                d,
-                std::fs::read(dir.join("notes.mid")).ok(),
-                std::fs::read_to_string(dir.join("notes.chart")).ok(),
-            )
+            let mid = std::fs::read(dir.join("notes.mid")).ok();
+            let chart_text = if mid.is_some() {
+                None
+            } else {
+                std::fs::read_to_string(dir.join("notes.chart")).ok()
+            };
+            (t, a, d, mid, chart_text)
         }
         SongSource::Sng(path) => {
             let sng = SngFile::open(path)?;
             let (t, a, d) =
                 meta_from_pairs(sng.metadata.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-            let chart_text = sng.read("notes.chart").map(|b| String::from_utf8_lossy(&b).to_string());
-            (t, a, d, sng.read("notes.mid"), chart_text)
+            let mid = if sng.has("notes.mid") { Some(sng.read("notes.mid")?) } else { None };
+            let chart_text = if mid.is_none() && sng.has("notes.chart") {
+                Some(String::from_utf8_lossy(&sng.read("notes.chart")?).to_string())
+            } else {
+                None
+            };
+            (t, a, d, mid, chart_text)
         }
     };
 
@@ -352,7 +350,7 @@ pub fn load_song(source: &SongSource) -> Option<SongChart> {
     } else if let Some(text) = chart_text {
         parse_chart(&text, delay)?
     } else {
-        return None;
+        return Err("no notes.mid or notes.chart".into());
     };
     if !title.is_empty() {
         chart.title = title;
@@ -360,7 +358,7 @@ pub fn load_song(source: &SongSource) -> Option<SongChart> {
     if !artist.is_empty() {
         chart.artist = artist;
     }
-    Some(chart)
+    Ok(chart)
 }
 
 const AUDIO_EXTS: [&str; 4] = ["opus", "ogg", "mp3", "wav"];
@@ -368,41 +366,35 @@ const AUDIO_EXTS: [&str; 4] = ["opus", "ogg", "mp3", "wav"];
 fn is_stem_name(name: &str) -> bool {
     let lower = name.to_lowercase();
     let Some((base, ext)) = lower.rsplit_once('.') else { return false };
-    AUDIO_EXTS.contains(&ext)
-        && !matches!(base, "crowd" | "preview")
-        && !base.starts_with("crowd")
+    AUDIO_EXTS.contains(&ext) && !matches!(base, "crowd" | "preview") && !base.starts_with("crowd")
 }
 
 /// All audio stems for a song as (filename, bytes).
-pub fn stem_files(source: &SongSource) -> Vec<(String, Vec<u8>)> {
+pub fn stem_files(source: &SongSource) -> Result<Vec<(String, Vec<u8>)>, String> {
     let mut out = Vec::new();
     match source {
         SongSource::Folder(dir) => {
-            if let Ok(read) = std::fs::read_dir(dir) {
-                for e in read.flatten() {
-                    let name = e.file_name().to_string_lossy().to_string();
-                    if is_stem_name(&name) {
-                        if let Ok(bytes) = std::fs::read(e.path()) {
-                            out.push((name, bytes));
-                        }
-                    }
+            let read = std::fs::read_dir(dir).map_err(|e| format!("cannot read folder: {e}"))?;
+            for e in read.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if is_stem_name(&name) {
+                    let bytes = std::fs::read(e.path()).map_err(|e| format!("{name}: {e}"))?;
+                    out.push((name, bytes));
                 }
             }
         }
         SongSource::Sng(path) => {
-            if let Some(sng) = SngFile::open(path) {
-                let names: Vec<String> = sng.file_names().cloned().collect();
-                for name in names {
-                    if is_stem_name(&name) {
-                        if let Some(bytes) = sng.read(&name) {
-                            out.push((name, bytes));
-                        }
-                    }
+            let sng = SngFile::open(path)?;
+            let names: Vec<String> = sng.file_names().cloned().collect();
+            for name in names {
+                if is_stem_name(&name) {
+                    let bytes = sng.read(&name)?;
+                    out.push((name, bytes));
                 }
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Stem base names that carry the charted instrument, in preference order.
@@ -415,11 +407,15 @@ pub fn lead_stem_names(instrument: Instrument) -> &'static [&'static str] {
 }
 
 /// Scan songs/ for playable songs: unpacked folders and raw .sng files.
-pub fn scan_songs(root: &Path) -> Vec<SongEntry> {
+/// Returns the playable entries plus a human-readable reason for every
+/// song-shaped thing that couldn't be loaded, so failures aren't silent.
+pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
     let mut entries = Vec::new();
-    let Ok(read) = std::fs::read_dir(root) else { return entries };
+    let mut errors = Vec::new();
+    let Ok(read) = std::fs::read_dir(root) else { return (entries, errors) };
     for e in read.flatten() {
         let path = e.path();
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let source = if path.is_dir() {
             SongSource::Folder(path)
         } else if path.extension().is_some_and(|x| x.eq_ignore_ascii_case("sng")) {
@@ -427,21 +423,30 @@ pub fn scan_songs(root: &Path) -> Vec<SongEntry> {
         } else {
             continue;
         };
-        if let Some(chart) = load_song(&source) {
-            let available: Vec<usize> = (0..4).filter(|&d| chart.diffs[d].len() >= 20).collect();
-            if available.is_empty() {
-                continue;
+        match load_song(&source) {
+            Ok(chart) => {
+                let available: Vec<usize> =
+                    (0..4).filter(|&d| chart.diffs[d].len() >= 20).collect();
+                if available.is_empty() {
+                    errors.push(format!("{name}: no difficulty with enough notes"));
+                    continue;
+                }
+                entries.push(SongEntry {
+                    title: if chart.title.is_empty() {
+                        "Unknown".into()
+                    } else {
+                        chart.title.clone()
+                    },
+                    artist: chart.artist.clone(),
+                    available,
+                    source,
+                });
             }
-            entries.push(SongEntry {
-                title: if chart.title.is_empty() { "Unknown".into() } else { chart.title.clone() },
-                artist: chart.artist.clone(),
-                available,
-                source,
-            });
+            Err(err) => errors.push(format!("{name}: {err}")),
         }
     }
     entries.sort_by(|a, b| a.title.cmp(&b.title));
-    entries
+    (entries, errors)
 }
 
 #[cfg(test)]
@@ -459,13 +464,21 @@ mod sng_tests {
         assert_eq!(chart.title, "Seven Nation Army");
         assert!(chart.instrument == Instrument::Bass);
         assert!(chart.diffs[0].len() > 100);
-        let stems = stem_files(&source);
-        println!("sng stems: {:?}", stems.iter().map(|(n, b)| (n.clone(), b.len())).collect::<Vec<_>>());
+        let stems = stem_files(&source).expect("stems should read");
+        println!(
+            "sng stems: {:?}",
+            stems.iter().map(|(n, b)| (n.clone(), b.len())).collect::<Vec<_>>()
+        );
         assert!(stems.iter().any(|(n, _)| n.starts_with("rhythm")));
         // Decode one opus stem end-to-end
         let (name, bytes) = stems.iter().find(|(n, _)| n.starts_with("song")).unwrap();
         let buf = crate::decode::decode(bytes, name, 48000).expect("opus should decode");
-        println!("decoded {} -> {} frames ({:.1}s at 48k)", name, buf.len(), buf.len() as f64 / 48000.0);
+        println!(
+            "decoded {} -> {} frames ({:.1}s at 48k)",
+            name,
+            buf.len(),
+            buf.len() as f64 / 48000.0
+        );
         assert!(buf.len() as f64 / 48000.0 > 200.0, "should be a full-length song");
     }
 }
@@ -476,9 +489,12 @@ mod library_tests {
 
     #[test]
     fn scans_all_songs() {
-        let entries = scan_songs(Path::new("songs"));
+        let (entries, errors) = scan_songs(Path::new("songs"));
         for e in &entries {
             println!("{} — {} (diffs {:?})", e.title, e.artist, e.available);
+        }
+        for e in &errors {
+            println!("error: {e}");
         }
         if !entries.is_empty() {
             assert!(entries.iter().all(|e| !e.available.is_empty()));

@@ -9,19 +9,19 @@ use std::sync::Arc;
 use crate::audio::Buf;
 
 /// Decode `bytes` (format inferred from `name`'s extension) and resample to
-/// `out_rate`. Returns None on any decode failure.
-pub fn decode(bytes: &[u8], name: &str, out_rate: u32) -> Option<Buf> {
+/// `out_rate`.
+pub fn decode(bytes: &[u8], name: &str, out_rate: u32) -> Result<Buf, String> {
     let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     let (frames, rate) = match ext.as_str() {
         "opus" => decode_opus(bytes)?,
         _ => decode_symphonia(bytes, &ext)?,
     };
-    Some(Arc::new(resample(frames, rate, out_rate)))
+    Ok(Arc::new(resample(frames, rate, out_rate)))
 }
 
 // ---------------------------------------------------------------- opus
 
-fn decode_opus(bytes: &[u8]) -> Option<(Vec<[f32; 2]>, u32)> {
+fn decode_opus(bytes: &[u8]) -> Result<(Vec<[f32; 2]>, u32), String> {
     let mut reader = ogg::PacketReader::new(Cursor::new(bytes));
     let mut decoder: Option<opus::Decoder> = None;
     let mut channels = 2usize;
@@ -33,7 +33,7 @@ fn decode_opus(bytes: &[u8]) -> Option<(Vec<[f32; 2]>, u32)> {
         let data = &packet.data;
         if data.starts_with(b"OpusHead") {
             if data.len() < 19 {
-                return None;
+                return Err("malformed OpusHead header".into());
             }
             channels = data[9] as usize;
             pre_skip = u16::from_le_bytes([data[10], data[11]]) as usize;
@@ -47,27 +47,28 @@ fn decode_opus(bytes: &[u8]) -> Option<(Vec<[f32; 2]>, u32)> {
         let Some(dec) = decoder.as_mut() else { continue };
         let Ok(n) = dec.decode_float(data, &mut pcm, false) else { continue };
         for i in 0..n {
-            let (l, r) = if channels == 1 {
-                (pcm[i], pcm[i])
-            } else {
-                (pcm[i * 2], pcm[i * 2 + 1])
-            };
+            let (l, r) =
+                if channels == 1 { (pcm[i], pcm[i]) } else { (pcm[i * 2], pcm[i * 2 + 1]) };
             out.push([l, r]);
         }
     }
     if out.is_empty() {
-        return None;
+        return Err(if decoder.is_none() {
+            "no OpusHead found — not an ogg-opus stream".into()
+        } else {
+            "opus stream decoded to no audio".into()
+        });
     }
     // OpusHead declares encoder padding to drop from the start
     if pre_skip > 0 && pre_skip < out.len() {
         out.drain(..pre_skip);
     }
-    Some((out, 48000))
+    Ok((out, 48000))
 }
 
 // ---------------------------------------------------------------- symphonia
 
-fn decode_symphonia(bytes: &[u8], ext: &str) -> Option<(Vec<[f32; 2]>, u32)> {
+fn decode_symphonia(bytes: &[u8], ext: &str) -> Result<(Vec<[f32; 2]>, u32), String> {
     use symphonia::core::audio::SampleBuffer;
     use symphonia::core::codecs::DecoderOptions;
     use symphonia::core::formats::FormatOptions;
@@ -80,12 +81,12 @@ fn decode_symphonia(bytes: &[u8], ext: &str) -> Option<(Vec<[f32; 2]>, u32)> {
     hint.with_extension(ext);
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
-        .ok()?;
+        .map_err(|e| format!("unrecognized {ext} stream: {e}"))?;
     let mut format = probed.format;
-    let track = format.default_track()?.clone();
+    let track = format.default_track().ok_or("no audio track in stream")?.clone();
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
-        .ok()?;
+        .map_err(|e| format!("codec init failed: {e}"))?;
 
     let mut rate = track.codec_params.sample_rate.unwrap_or(44100);
     let mut out: Vec<[f32; 2]> = Vec::new();
@@ -99,9 +100,8 @@ fn decode_symphonia(bytes: &[u8], ext: &str) -> Option<(Vec<[f32; 2]>, u32)> {
         let spec = *decoded.spec();
         rate = spec.rate;
         let channels = spec.channels.count();
-        let buf = sample_buf.get_or_insert_with(|| {
-            SampleBuffer::<f32>::new(decoded.capacity() as u64, spec)
-        });
+        let buf = sample_buf
+            .get_or_insert_with(|| SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
         buf.copy_interleaved_ref(decoded);
         let samples = buf.samples();
         match channels {
@@ -110,9 +110,9 @@ fn decode_symphonia(bytes: &[u8], ext: &str) -> Option<(Vec<[f32; 2]>, u32)> {
         }
     }
     if out.is_empty() {
-        None
+        Err("stream decoded to no audio".into())
     } else {
-        Some((out, rate))
+        Ok((out, rate))
     }
 }
 
@@ -138,27 +138,24 @@ fn resample(input: Vec<[f32; 2]>, from: u32, to: u32) -> Vec<[f32; 2]> {
     out
 }
 
-/// Sum several stems into one buffer, then normalize the whole mix (backing
-/// and lead together) if the sum would clip.
-pub fn mix_stems(stems: &[Buf], lead: Option<&Buf>) -> (Buf, Option<Buf>) {
-    let len = stems
-        .iter()
-        .map(|s| s.len())
-        .chain(lead.map(|l| l.len()))
-        .max()
-        .unwrap_or(0);
-    let mut mixed = vec![[0f32; 2]; len];
-    for stem in stems {
-        for (i, s) in stem.iter().enumerate() {
-            mixed[i][0] += s[0];
-            mixed[i][1] += s[1];
-        }
+/// Sum one stem into the running backing mix, growing it as needed. Stems are
+/// mixed one at a time as they decode, so peak memory is the mix plus a
+/// single stem — never every decoded stem at once.
+pub fn mix_into(mix: &mut Vec<[f32; 2]>, stem: &[[f32; 2]]) {
+    if mix.len() < stem.len() {
+        mix.resize(stem.len(), [0.0; 2]);
     }
-    let peak = |buf: &[[f32; 2]]| {
-        buf.iter().fold(0f32, |m, s| m.max(s[0].abs()).max(s[1].abs()))
-    };
+    for (m, s) in mix.iter_mut().zip(stem.iter()) {
+        m[0] += s[0];
+        m[1] += s[1];
+    }
+}
+
+/// Normalize the summed backing (and lead together) if the sum would clip.
+pub fn finalize_mix(mut mixed: Vec<[f32; 2]>, lead: Option<Buf>) -> (Buf, Option<Buf>) {
+    let peak = |buf: &[[f32; 2]]| buf.iter().fold(0f32, |m, s| m.max(s[0].abs()).max(s[1].abs()));
     let mut max = peak(&mixed);
-    if let Some(l) = lead {
+    if let Some(l) = &lead {
         // The lead plays on top of the backing; scale for the combined peak
         max = max.max(peak(l) + max * 0.2);
     }
@@ -173,5 +170,5 @@ pub fn mix_stems(stems: &[Buf], lead: Option<&Buf>) -> (Buf, Option<Buf>) {
             return (Arc::new(mixed), Some(Arc::new(scaled)));
         }
     }
-    (Arc::new(mixed), lead.cloned())
+    (Arc::new(mixed), lead)
 }

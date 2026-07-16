@@ -3,6 +3,8 @@
 // zones on a QWERTY keyboard. Plays real Clone Hero songs (.sng or folders)
 // through its own cpal mixer, whose sample counter IS the game clock.
 
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 
 use macroquad::prelude::*;
@@ -13,7 +15,7 @@ mod decode;
 mod sng;
 
 use audio::{AudioEngine, Buf};
-use chart::{SongChart, SongEntry, SongSource, DIFF_NAMES};
+use chart::{SongChart, SongSource, DIFF_NAMES};
 
 // Timing windows (seconds from the note's ideal time)
 const PERFECT_WIN: f64 = 0.055;
@@ -21,6 +23,16 @@ const GREAT_WIN: f64 = 0.110;
 const GOOD_WIN: f64 = 0.170;
 // How long a note is visible before it reaches the strike line
 const APPROACH: f64 = 1.5;
+// Calibration metronome period (120 BPM)
+const CALIB_PERIOD: f64 = 0.5;
+
+// Input latency compensation measured on the calibration screen, in ms.
+// Subtracted from the clock when judging keypresses (visuals stay raw).
+static CALIB_MS: AtomicI64 = AtomicI64::new(0);
+
+fn calib_offset() -> f64 {
+    CALIB_MS.load(Ordering::Relaxed) as f64 / 1000.0
+}
 
 /// Mini keyboard legend drawn in the menu: every key tinted by its lane, so
 /// the lane-to-hand mapping is shown, not spelled out.
@@ -39,7 +51,13 @@ fn draw_keyboard_legend(center_x: f32, top_y: f32) {
             draw_rectangle_lines(x, y, key, key, 1.5, wa(c, 0.45));
             let label = ch.to_ascii_uppercase().to_string();
             let d = msize(&label, 13);
-            dtext(&label, x + key / 2.0 - d.width / 2.0, y + key / 2.0 + d.height / 2.0, 13.0, wa(c, 0.85));
+            dtext(
+                &label,
+                x + key / 2.0 - d.width / 2.0,
+                y + key / 2.0 + d.height / 2.0,
+                13.0,
+                wa(c, 0.85),
+            );
         }
     }
 }
@@ -104,15 +122,15 @@ const THEMES: [Theme; 3] = [
     },
 ];
 
-static THEME_IDX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static SENTENCE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static THEME_IDX: AtomicUsize = AtomicUsize::new(0);
+static SENTENCE_MODE: AtomicBool = AtomicBool::new(false);
 
 fn th() -> &'static Theme {
-    &THEMES[THEME_IDX.load(std::sync::atomic::Ordering::Relaxed) % THEMES.len()]
+    &THEMES[THEME_IDX.load(Ordering::Relaxed) % THEMES.len()]
 }
 
 fn sentence_mode() -> bool {
-    SENTENCE_MODE.load(std::sync::atomic::Ordering::Relaxed)
+    SENTENCE_MODE.load(Ordering::Relaxed)
 }
 
 /// A theme color at a given alpha.
@@ -148,7 +166,7 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
     &["a", "i"],
     &[
         "go", "up", "on", "we", "it", "my", "do", "so", "am", "an", "as", "at", "be", "by", "he",
-        "if", "in", "is", "me", "no", "of", "or", "to", "us"
+        "if", "in", "is", "me", "no", "of", "or", "to", "us",
     ],
     &[
         "the", "and", "for", "you", "not", "are", "all", "new", "was", "can", "has", "but", "our",
@@ -161,7 +179,7 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "bar", "dog", "usr", "gas", "six", "pre", "zip", "bid", "inn", "los", "win", "bed", "sea",
         "cut", "tel", "kit", "boy", "son", "mac", "bin", "van", "ads", "pop", "hit", "eye", "fee",
         "las", "aid", "fat", "saw", "tom", "led", "fan", "ten", "cat", "die", "pet", "guy", "dev",
-        "cup", "lee", "bob", "fit", "met", "ice", "sec", "bus", "bag", "ibm"
+        "cup", "lee", "bob", "fit", "met", "ice", "sec", "bus", "bag", "ibm",
     ],
     &[
         "that", "this", "with", "from", "your", "have", "more", "will", "home", "page", "free",
@@ -182,7 +200,7 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "word", "bill", "talk", "kids", "true", "else", "mark", "rock", "tips", "plus", "auto",
         "edit", "fast", "fact", "unit", "tech", "meet", "feel", "bank", "risk", "town", "girl",
         "toys", "golf", "loan", "wide", "sort", "half", "step", "none", "paul", "lake", "fire",
-        "chat", "loss"
+        "chat", "loss",
     ],
     &[
         "about", "other", "which", "their", "there", "first", "would", "these", "click", "price",
@@ -204,7 +222,7 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "cheap", "third", "gifts", "cover", "often", "watch", "deals", "words", "james", "heart",
         "error", "clear", "makes", "india", "taken", "known", "cases", "quick", "whole", "later",
         "basic", "shows", "along", "among", "death", "speed", "brand", "stuff", "japan", "doing",
-        "loans", "shoes", "entry", "notes", "force", "river", "album", "views", "plans", "build"
+        "loans", "shoes", "entry", "notes", "force", "river", "album", "views", "plans", "build",
     ],
     &[
         "search", "people", "health", "should", "system", "policy", "number", "please", "rights",
@@ -226,7 +244,7 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "casino", "volume", "anyone", "silver", "inside", "mature", "rather", "supply", "robert",
         "skills", "advice", "career", "rental", "middle", "taking", "values", "coming", "object",
         "length", "client", "follow", "sample", "george", "choice", "artist", "levels", "letter",
-        "phones", "summer", "degree", "button", "matter", "custom", "almost", "editor", "female"
+        "phones", "summer", "degree", "button", "matter", "custom", "almost", "editor", "female",
     ],
     &[
         "contact", "service", "product", "support", "message", "through", "privacy", "company",
@@ -246,7 +264,7 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "florida", "license", "holiday", "writing", "effects", "created", "kingdom", "thought",
         "storage", "summary", "western", "overall", "package", "players", "started", "someone",
         "printer", "believe", "nothing", "certain", "running", "jewelry", "islands", "british",
-        "sellers", "tuesday", "lesbian", "machine"
+        "sellers", "tuesday", "lesbian", "machine",
     ],
     &[
         "business", "services", "products", "research", "comments", "national", "shipping",
@@ -264,7 +282,7 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "exchange", "continue", "benefits", "anything", "mortgage", "solution", "addition",
         "clothing", "homepage", "military", "decision", "division", "actually", "saturday",
         "starting", "thursday", "consumer", "contract", "releases", "virginia", "multiple",
-        "featured", "friendly", "schedule", "everyone", "approach"
+        "featured", "friendly", "schedule", "everyone", "approach",
     ],
 ];
 
@@ -516,7 +534,6 @@ fn make_sounds(rate: u32) -> Sounds {
     Sounds { kick, hat, miss }
 }
 
-
 // ---------------------------------------------------------------- play state
 
 // Which song was played, for the results screen and instant restarts
@@ -538,7 +555,14 @@ struct Play {
     diff_name: String,
     notes: Vec<Note>,
     words: Vec<String>,
-    ducked: bool, // lead stem is currently ducked after a miss
+    // First note that could still be Pending; hit/missed prefixes are never
+    // rescanned, so keypress matching stays O(window) on long charts
+    cursor: usize,
+    // notes index where each word starts (notes are sorted, words contiguous)
+    word_starts: Vec<usize>,
+    paused: bool,
+    pause_now: f64, // clock value frozen at the moment of pausing, for draw
+    ducked: bool,   // lead stem is currently ducked after a miss
     beats: Vec<f64>,
     next_beat: usize,
     sp_phrases: Vec<SpPhrase>,
@@ -635,9 +659,7 @@ impl Play {
         for g in groups {
             match merged.last_mut() {
                 Some(prev)
-                    if g.len() == 1
-                        && prev.len() < 8
-                        && g[0] - *prev.last().unwrap() < 1.6 =>
+                    if g.len() == 1 && prev.len() < 8 && g[0] - *prev.last().unwrap() < 1.6 =>
                 {
                     prev.extend(g);
                 }
@@ -704,12 +726,20 @@ impl Play {
         first_note_time: f64,
         end_time: f64,
     ) -> Self {
+        let mut word_starts = vec![notes.len(); words.len()];
+        for (i, n) in notes.iter().enumerate().rev() {
+            word_starts[n.word] = i;
+        }
         Play {
             song_ref,
             title,
             diff_name,
             notes,
             words,
+            cursor: 0,
+            word_starts,
+            paused: false,
+            pause_now: 0.0,
             ducked: false,
             beats,
             next_beat: 0,
@@ -737,6 +767,14 @@ impl Play {
 
     fn sp_active(&self, now: f64) -> bool {
         now < self.sp_until
+    }
+
+    /// Skip the cursor past notes that can never change state again.
+    fn advance_cursor(&mut self) {
+        while self.cursor < self.notes.len() && self.notes[self.cursor].state != NoteState::Pending
+        {
+            self.cursor += 1;
+        }
     }
 
     fn multiplier(&self, now: f64) -> i64 {
@@ -801,8 +839,10 @@ impl Play {
         }
         let g = geom();
 
+        self.advance_cursor();
         let mut best: Option<(usize, f64)> = None;
-        for (i, n) in self.notes.iter().enumerate() {
+        for i in self.cursor..self.notes.len() {
+            let n = &self.notes[i];
             if n.time - now > GOOD_WIN {
                 break; // notes are sorted by time
             }
@@ -810,7 +850,7 @@ impl Play {
                 continue;
             }
             let dt = now - n.time;
-            if dt.abs() <= GOOD_WIN && best.map_or(true, |(_, b)| dt.abs() < b.abs()) {
+            if dt.abs() <= GOOD_WIN && best.is_none_or(|(_, b)| dt.abs() < b.abs()) {
                 best = Some((i, dt));
             }
         }
@@ -877,7 +917,9 @@ impl Play {
         }
     }
 
-    fn update(&mut self, now: f64, snd: &Sounds, engine: &AudioEngine) {
+    /// `now` is the raw clock (visuals); `jnow` has the calibration offset
+    /// applied and drives everything that judges the player.
+    fn update(&mut self, now: f64, jnow: f64, snd: &Sounds, engine: &AudioEngine) {
         let dt = get_frame_time();
         let g = geom();
 
@@ -888,10 +930,14 @@ impl Play {
         }
 
         // Notes that sailed past the window become misses
+        self.advance_cursor();
         let mut missed = Vec::new();
-        for (i, n) in self.notes.iter_mut().enumerate() {
-            if n.state == NoteState::Pending && now - n.time > GOOD_WIN {
-                n.state = NoteState::Missed;
+        for i in self.cursor..self.notes.len() {
+            if self.notes[i].time >= jnow - GOOD_WIN {
+                break; // notes are sorted by time
+            }
+            if self.notes[i].state == NoteState::Pending {
+                self.notes[i].state = NoteState::Missed;
                 missed.push(i);
             }
         }
@@ -929,13 +975,10 @@ impl Play {
         self.beat_flash = (self.beat_flash - 4.0 * dt).max(0.0);
 
         // Ease the word queue toward the current word (completed words slide
-        // up and out, upcoming words rise into place)
-        let target = self
-            .notes
-            .iter()
-            .find(|n| n.state == NoteState::Pending)
-            .map(|n| n.word)
-            .unwrap_or(self.words.len()) as f32;
+        // up and out, upcoming words rise into place). After advance_cursor
+        // the cursor sits on the first pending note.
+        self.advance_cursor();
+        let target = self.notes.get(self.cursor).map(|n| n.word).unwrap_or(self.words.len()) as f32;
         let k = 1.0 - (-dt * 9.0).exp();
         self.word_anim += (target - self.word_anim) * k;
     }
@@ -992,12 +1035,26 @@ impl Play {
             let progress = ((t - now) / APPROACH) as f32;
             let y = g.hit_y - progress * travel + oy;
             let alpha = if bi % 4 == 0 { 0.14 } else { 0.05 };
-            draw_line(g.left + ox, y, g.left + g.width + ox, y, 1.0, Color::new(1.0, 1.0, 1.0, alpha));
+            draw_line(
+                g.left + ox,
+                y,
+                g.left + g.width + ox,
+                y,
+                1.0,
+                Color::new(1.0, 1.0, 1.0, alpha),
+            );
         }
 
         // Strike line
         let flash = 0.42 + 0.14 * self.beat_flash;
-        draw_line(g.left + ox, g.hit_y + oy, g.left + g.width + ox, g.hit_y + oy, 4.0, Color::new(1.0, 1.0, 1.0, flash));
+        draw_line(
+            g.left + ox,
+            g.hit_y + oy,
+            g.left + g.width + ox,
+            g.hit_y + oy,
+            4.0,
+            Color::new(1.0, 1.0, 1.0, flash),
+        );
         for lane in 0..4 {
             let x = g.left + g.lane_w * (lane as f32 + 0.5) + ox;
             let mut c = th().lane[lane];
@@ -1005,9 +1062,17 @@ impl Play {
             draw_circle_lines(x, g.hit_y + oy, 24.0, 2.0, c);
         }
 
+        // Only notes near the highway need drawing: anything more than one
+        // approach-window old is far below the screen, anything more than one
+        // ahead hasn't entered it. Notes are sorted, so this is a slice.
+        let visible_lo = self.notes.partition_point(|n| n.time < now - APPROACH);
+
         // Connectors between letters of the same word
-        for w in self.notes.windows(2) {
+        for w in self.notes[visible_lo.saturating_sub(1)..].windows(2) {
             let (a, b) = (&w[0], &w[1]);
+            if a.time - now > APPROACH {
+                break;
+            }
             if a.word != b.word || a.state != NoteState::Pending || b.state != NoteState::Pending {
                 continue;
             }
@@ -1021,7 +1086,10 @@ impl Play {
 
         // Gems
         let radius = (g.lane_w * 0.26).min(24.0);
-        for n in &self.notes {
+        for n in &self.notes[visible_lo..] {
+            if n.time - now > APPROACH {
+                break;
+            }
             let pos = self.note_pos(n, &g, now) + vec2(ox, oy);
             if pos.y < g.top - 40.0 || pos.y > h + 40.0 {
                 continue;
@@ -1030,7 +1098,8 @@ impl Play {
                 NoteState::Pending => {
                     // Dark-bodied gem with a lane-colored ring and letter —
                     // reads as part of the theme instead of a solid disc
-                    let closeness = (1.0 - ((n.time - now) / APPROACH).clamp(0.0, 1.0) as f32).powi(2);
+                    let closeness =
+                        (1.0 - ((n.time - now) / APPROACH).clamp(0.0, 1.0) as f32).powi(2);
                     let lane_c = th().lane[n.lane];
                     let mut glow = lane_c;
                     glow.a = 0.08 + 0.20 * closeness;
@@ -1056,7 +1125,13 @@ impl Play {
                     draw_circle_lines(pos.x, pos.y, radius, 2.0, wa(th().miss, 0.4));
                     let label = n.ch.to_ascii_uppercase().to_string();
                     let dims = msize(&label, 30);
-                    dtext(&label, pos.x - dims.width / 2.0, pos.y + dims.height / 2.0, 30.0, wa(th().miss, 0.45));
+                    dtext(
+                        &label,
+                        pos.x - dims.width / 2.0,
+                        pos.y + dims.height / 2.0,
+                        30.0,
+                        wa(th().miss, 0.45),
+                    );
                 }
                 NoteState::Hit(_) => {}
             }
@@ -1091,29 +1166,20 @@ impl Play {
             let depth = (offset.max(0.0) / 1.6).clamp(0.0, 1.0);
             let size = 44.0 - 22.0 * depth;
             // Completed words fade out as they slide above the current slot
-            let row_alpha = if offset < 0.0 {
-                (1.0 + offset).max(0.0)
-            } else {
-                1.0 - 0.72 * depth
-            };
+            let row_alpha = if offset < 0.0 { (1.0 + offset).max(0.0) } else { 1.0 - 0.72 * depth };
             if row_alpha <= 0.01 {
                 continue;
             }
             let word = &self.words[wi];
-            let letter_states: Vec<NoteState> = self
-                .notes
-                .iter()
-                .filter(|n| n.word == wi)
-                .map(|n| n.state)
-                .collect();
+            let ws = self.word_starts[wi];
+            let we = self.word_starts.get(wi + 1).copied().unwrap_or(self.notes.len());
+            let letter_states = &self.notes[ws.min(we)..we];
             let gap = 6.0 - 2.5 * depth;
-            let total_w: f32 = word
-                .chars()
-                .map(|c| msize(&c.to_string(), size as u16).width + gap)
-                .sum();
+            let total_w: f32 =
+                word.chars().map(|c| msize(&c.to_string(), size as u16).width + gap).sum();
             let mut x = g.left + g.width / 2.0 - total_w / 2.0 + ox;
             for (i, c) in word.chars().enumerate() {
-                let mut color = match letter_states.get(i) {
+                let mut color = match letter_states.get(i).map(|n| n.state) {
                     Some(NoteState::Hit(j)) => {
                         let mut c = j.color();
                         c.a = 0.9;
@@ -1139,7 +1205,14 @@ impl Play {
         let sp_on = self.sp_active(now);
         if sp_on {
             draw_rectangle(g.left + ox, 0.0, g.width, h, wa(th().accent, 0.05));
-            draw_line(g.left + ox, g.hit_y + oy, g.left + g.width + ox, g.hit_y + oy, 4.0, wa(th().accent, 0.8));
+            draw_line(
+                g.left + ox,
+                g.hit_y + oy,
+                g.left + g.width + ox,
+                g.hit_y + oy,
+                4.0,
+                wa(th().accent, 0.8),
+            );
         }
         if self.energy > 0.0 || sp_on {
             let bar_w = 180.0;
@@ -1168,10 +1241,22 @@ impl Play {
         dtext(&format!("x{}", self.multiplier(now)), 24.0, 72.0, 24.0, mult_color);
         let acc_text = format!("{:>5.1} %", self.accuracy());
         let ad = msize(&acc_text, 26);
-        dtext(&acc_text, screen_width() - ad.width - 24.0, 40.0, 26.0, Color::new(1.0, 1.0, 1.0, 0.85));
+        dtext(
+            &acc_text,
+            screen_width() - ad.width - 24.0,
+            40.0,
+            26.0,
+            Color::new(1.0, 1.0, 1.0, 0.85),
+        );
         let song_text = format!("{}  ·  {}", self.title, self.diff_name);
         let sd = msize(&song_text, 18);
-        dtext(&song_text, screen_width() - sd.width - 24.0, 64.0, 18.0, Color::new(1.0, 1.0, 1.0, 0.4));
+        dtext(
+            &song_text,
+            screen_width() - sd.width - 24.0,
+            64.0,
+            18.0,
+            Color::new(1.0, 1.0, 1.0, 0.4),
+        );
 
         // Combo
         if self.combo >= 4 {
@@ -1250,68 +1335,108 @@ fn draw_centered(text: &str, y: f32, size: f32, color: Color) {
 
 // ---------------------------------------------------------------- main
 
+/// Latency calibration: tap along to a metronome, apply the median offset.
+struct Calibrate {
+    taps: Vec<f64>,       // signed tap offsets vs the nearest tick, seconds
+    scheduled_until: f64, // timeline time up to which ticks are queued
+}
+
 enum Scene {
-    Menu { sel: usize, diff_sel: usize },
+    Menu { sel: usize, diff_sel: usize, scroll: f32 },
+    Loading { rx: Receiver<LoadMsg>, song: usize, diff: usize, title: String },
     Playing(Box<Play>),
     Results(Results),
+    Calibrate(Calibrate),
 }
 
 type StemCache = Option<(SongSource, Buf, Option<Buf>)>;
 
-/// Load a chart song: parse the chart, decode all stems in parallel straight
-/// from their source (folder or .sng — no conversions), pick the lead stem
-/// for the charted instrument, and start the engine timeline.
-fn start_chart_song(
-    songs: &[SongEntry],
-    idx: usize,
-    diff: usize,
-    cache: &mut StemCache,
-    engine: &AudioEngine,
-    snd: &Sounds,
-) -> Option<Play> {
-    let entry = songs.get(idx)?;
-    let chart_data = chart::load_song(&entry.source)?;
-    let diff = if chart_data.diffs[diff].len() >= 20 { diff } else { *entry.available.last()? };
+struct LoadedSong {
+    chart: SongChart,
+    backing: Buf,
+    lead: Option<Buf>,
+}
 
-    let (backing, lead) = match cache {
-        Some((src, b, l)) if *src == entry.source => (b.clone(), l.clone()),
-        _ => {
-            let stems = chart::stem_files(&entry.source);
-            let rate = engine.sample_rate;
-            let decoded: Vec<(String, Buf)> = std::thread::scope(|s| {
-                let handles: Vec<_> = stems
-                    .iter()
-                    .map(|(name, bytes)| {
-                        s.spawn(move || decode::decode(bytes, name, rate).map(|b| (name.clone(), b)))
-                    })
-                    .collect();
-                handles.into_iter().filter_map(|h| h.join().ok().flatten()).collect()
-            });
+enum LoadMsg {
+    Done(Box<LoadedSong>),
+    Failed(String),
+}
 
-            let lead_names = chart::lead_stem_names(chart_data.instrument);
-            let mut lead: Option<Buf> = None;
-            let mut backing_parts: Vec<Buf> = Vec::new();
-            for (name, buf) in decoded {
+/// Kick off a song load on a worker thread so the render loop keeps
+/// animating; the Loading scene polls the returned channel.
+fn spawn_loader(source: SongSource, rate: u32, cached: StemCache) -> Receiver<LoadMsg> {
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let msg = match load_song_full(&source, rate, cached) {
+            Ok(l) => LoadMsg::Done(Box::new(l)),
+            Err(e) => LoadMsg::Failed(e),
+        };
+        let _ = tx.send(msg);
+    });
+    rx
+}
+
+/// Parse the chart and decode stems straight from their source (folder or
+/// .sng — no conversions). Stems are decoded one at a time and summed into
+/// the backing mix as they finish, so peak memory is the mix plus a single
+/// stem — not every decoded stem at once.
+fn load_song_full(source: &SongSource, rate: u32, cached: StemCache) -> Result<LoadedSong, String> {
+    let chart = chart::load_song(source)?;
+    if let Some((src, backing, lead)) = cached {
+        if src == *source {
+            return Ok(LoadedSong { chart, backing, lead });
+        }
+    }
+    let stems = chart::stem_files(source)?;
+    if stems.is_empty() {
+        return Err("no audio stems found".into());
+    }
+    let lead_names = chart::lead_stem_names(chart.instrument);
+    let mut mix: Vec<[f32; 2]> = Vec::new();
+    let mut lead: Option<Buf> = None;
+    let mut failures: Vec<String> = Vec::new();
+    for (name, bytes) in stems {
+        match decode::decode(&bytes, &name, rate) {
+            Ok(buf) => {
                 let base = name.rsplit_once('.').map(|(b, _)| b.to_lowercase()).unwrap_or_default();
                 if lead.is_none() && lead_names.contains(&base.as_str()) {
                     lead = Some(buf);
                 } else {
-                    backing_parts.push(buf);
+                    decode::mix_into(&mut mix, &buf);
                 }
             }
-            // Single-stream songs: the whole mix is the backing, no ducking
-            if backing_parts.is_empty() {
-                backing_parts.extend(lead.take());
-            }
-            if backing_parts.is_empty() {
-                return None;
-            }
-            let (b, l) = decode::mix_stems(&backing_parts, lead.as_ref());
-            *cache = Some((entry.source.clone(), b.clone(), l.clone()));
-            (b, l)
+            Err(e) => failures.push(format!("{name}: {e}")),
         }
-    };
-    Some(Play::new_chart(idx, diff, &chart_data, engine, snd, backing, lead))
+    }
+    // Single-stream songs: the whole mix is the backing, no ducking
+    if mix.is_empty() {
+        match lead.take() {
+            Some(l) => mix = Arc::try_unwrap(l).unwrap_or_else(|a| (*a).clone()),
+            None => {
+                return Err(if failures.is_empty() {
+                    "no audio stems decoded".to_string()
+                } else {
+                    failures.join("  ·  ")
+                });
+            }
+        }
+    }
+    let (backing, lead) = decode::finalize_mix(mix, lead);
+    Ok(LoadedSong { chart, backing, lead })
+}
+
+fn median(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return 0.0;
+    }
+    let mut v = xs.to_vec();
+    v.sort_by(f64::total_cmp);
+    let n = v.len();
+    if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    }
 }
 
 /// Procedural app icon in the EMBER theme: dark rounded square, pale strike
@@ -1363,7 +1488,8 @@ fn icon_pixels<const N: usize>(size: usize) -> [u8; N] {
                 let body = blend(c, amber, 0.16);
                 c = [body[0], body[1], body[2], c[3]];
             }
-            let ring_a = (1.0 - ((d - ring_r).abs() - s * 0.045).max(0.0) * (3.0 / (s / 16.0))).clamp(0.0, 1.0);
+            let ring_a = (1.0 - ((d - ring_r).abs() - s * 0.045).max(0.0) * (3.0 / (s / 16.0)))
+                .clamp(0.0, 1.0);
             c = blend(c, amber, ring_a);
             c[3] *= mask;
             put(&mut px, x, y, c);
@@ -1392,9 +1518,11 @@ async fn main() {
     macroquad::rand::srand(macroquad::miniquad::date::now() as u64);
     let engine = AudioEngine::new();
     let sounds = make_sounds(engine.sample_rate);
-    let songs = chart::scan_songs(std::path::Path::new("songs"));
+    let (songs, scan_errors) = chart::scan_songs(std::path::Path::new("songs"));
     let mut stem_cache: StemCache = None;
-    let mut scene = Scene::Menu { sel: 0, diff_sel: 0 };
+    // The most recent load failure, shown in the menu until the next attempt
+    let mut status_error: Option<String> = None;
+    let mut scene = Scene::Menu { sel: 0, diff_sel: 0, scroll: 0.0 };
 
     // Debug hook: KW_AUTOSTART=<song>:<diff> jumps straight into a song
     if let Ok(v) = std::env::var("KW_AUTOSTART") {
@@ -1402,15 +1530,17 @@ async fn main() {
         let s: usize = it.next().and_then(|x| x.parse().ok()).unwrap_or(0);
         let d: usize = it.next().and_then(|x| x.parse().ok()).unwrap_or(0);
         if s < songs.len() {
-            if let Some(p) = start_chart_song(&songs, s, d, &mut stem_cache, &engine, &sounds) {
-                scene = Scene::Playing(Box::new(p));
-            }
+            let rx = spawn_loader(songs[s].source.clone(), engine.sample_rate, None);
+            scene = Scene::Loading { rx, song: s, diff: d, title: songs[s].title.clone() };
         }
     }
 
     loop {
+        // Buffers the audio callback retired get freed here, off the
+        // real-time thread
+        engine.reap();
         match &mut scene {
-            Scene::Menu { sel, diff_sel } => {
+            Scene::Menu { sel, diff_sel, scroll } => {
                 let rows = songs.len();
                 if rows == 0 {
                     clear_background(th().bg);
@@ -1421,15 +1551,21 @@ async fn main() {
                         22.0,
                         wa(th().secondary, 0.8),
                     );
+                    // If everything in songs/ failed to load, say why
+                    for (i, e) in scan_errors.iter().take(6).enumerate() {
+                        draw_centered(
+                            e,
+                            screen_height() * 0.5 + 44.0 + i as f32 * 22.0,
+                            17.0,
+                            wa(th().miss, 0.75),
+                        );
+                    }
                     next_frame().await;
                     continue;
                 }
                 // Difficulty options for the selected song
-                let diff_opts: Vec<(usize, String)> = songs[*sel]
-                    .available
-                    .iter()
-                    .map(|&d| (d, DIFF_NAMES[d].to_string()))
-                    .collect();
+                let diff_opts: Vec<(usize, String)> =
+                    songs[*sel].available.iter().map(|&d| (d, DIFF_NAMES[d].to_string())).collect();
                 *diff_sel = (*diff_sel).min(diff_opts.len() - 1);
 
                 if is_key_pressed(KeyCode::Up) {
@@ -1451,28 +1587,32 @@ async fn main() {
                     engine.play(&sounds.hat, 0.4);
                 }
                 if is_key_pressed(KeyCode::T) {
-                    let i = THEME_IDX.load(std::sync::atomic::Ordering::Relaxed);
-                    THEME_IDX.store((i + 1) % THEMES.len(), std::sync::atomic::Ordering::Relaxed);
+                    let i = THEME_IDX.load(Ordering::Relaxed);
+                    THEME_IDX.store((i + 1) % THEMES.len(), Ordering::Relaxed);
                     engine.play(&sounds.kick, 0.4);
                 }
                 if is_key_pressed(KeyCode::M) {
-                    SENTENCE_MODE.store(!sentence_mode(), std::sync::atomic::Ordering::Relaxed);
+                    SENTENCE_MODE.store(!sentence_mode(), Ordering::Relaxed);
                     engine.play(&sounds.kick, 0.4);
+                }
+                if is_key_pressed(KeyCode::C) {
+                    engine.play(&sounds.kick, 0.4);
+                    engine.start_timeline(1.0, None, None);
+                    scene = Scene::Calibrate(Calibrate { taps: Vec::new(), scheduled_until: 0.0 });
+                    next_frame().await;
+                    continue;
                 }
                 if is_key_pressed(KeyCode::Enter) {
                     engine.play(&sounds.kick, 0.5);
+                    status_error = None;
                     let (row, d) = (*sel, diff_opts[*diff_sel].0);
-                    clear_background(th().bg);
-                    draw_centered(
-                        &format!("loading  {} ...", songs[row].title),
-                        screen_height() * 0.5,
-                        30.0,
-                        WHITE,
+                    let rx = spawn_loader(
+                        songs[row].source.clone(),
+                        engine.sample_rate,
+                        stem_cache.clone(),
                     );
-                    next_frame().await;
-                    if let Some(p) = start_chart_song(&songs, row, d, &mut stem_cache, &engine, &sounds) {
-                        scene = Scene::Playing(Box::new(p));
-                    }
+                    scene =
+                        Scene::Loading { rx, song: row, diff: d, title: songs[row].title.clone() };
                     next_frame().await;
                     continue;
                 }
@@ -1489,50 +1629,92 @@ async fn main() {
                     Color::new(0.35, 0.85, 1.0, 0.6 + 0.3 * pulse),
                 );
 
-                for row in 0..rows {
-                    let y = 270.0 + row as f32 * 92.0;
+                // Songs that failed to scan, small in the top-left corner
+                for (i, e) in scan_errors.iter().take(3).enumerate() {
+                    dtext(
+                        &format!("! {e}"),
+                        16.0,
+                        28.0 + i as f32 * 20.0,
+                        15.0,
+                        wa(th().miss, 0.55),
+                    );
+                }
+                if scan_errors.len() > 3 {
+                    let more = format!("  + {} more", scan_errors.len() - 3);
+                    dtext(&more, 16.0, 28.0 + 60.0, 15.0, wa(th().miss, 0.4));
+                }
+                // The last load failure, front and center
+                if let Some(err) = &status_error {
+                    draw_centered(&format!("!  {err}"), 205.0, 17.0, wa(th().miss, 0.85));
+                }
+
+                // The song list is a wheel: the selected row eases to the
+                // center of the band and rows fade/shrink with distance, so a
+                // large library scrolls while the bottom UI never moves.
+                let dtf = get_frame_time();
+                *scroll += (*sel as f32 - *scroll) * (1.0 - (-dtf * 12.0).exp());
+                let hint_top = screen_height() - 130.0 - 122.0; // keyboard legend top
+                let band_top = 222.0;
+                let band_bot = hint_top - 26.0;
+                let cy = (band_top + band_bot) / 2.0;
+                let spacing = 92.0;
+                for (row, song) in songs.iter().enumerate() {
+                    let off = row as f32 - *scroll;
+                    let y = cy + off * spacing;
+                    if y < band_top - 24.0 || y > band_bot + 24.0 {
+                        continue;
+                    }
+                    // Wheel opacity: fade with distance from the center and
+                    // extinguish completely at the band edges
+                    let edge = (((y - band_top) / 70.0).min((band_bot - y) / 70.0)).clamp(0.0, 1.0);
+                    let a = (1.0 - off.abs() / 3.4).clamp(0.0, 1.0) * edge;
+                    if a <= 0.02 {
+                        continue;
+                    }
+                    let size = 40.0 - 6.0 * off.abs().min(2.0);
                     let selected = row == *sel;
-                    let (title, subtitle) = (songs[row].title.clone(), songs[row].artist.clone());
+                    let (title, subtitle) = (&song.title, &song.artist);
                     let name_color = if selected {
-                        wa(th().secondary, 1.0)
+                        wa(th().secondary, a)
                     } else {
-                        Color::new(1.0, 1.0, 1.0, 0.45)
+                        Color::new(1.0, 1.0, 1.0, 0.45 * a)
                     };
                     if selected {
-                        let dims = msize(&title, 40);
+                        let dims = msize(title, size as u16);
                         dtext(
                             ">",
                             screen_width() / 2.0 - dims.width / 2.0 - 40.0,
                             y,
-                            40.0,
-                            Color::new(1.0, 1.0, 1.0, 0.5 + 0.5 * pulse),
+                            size,
+                            Color::new(1.0, 1.0, 1.0, (0.5 + 0.5 * pulse) * a),
                         );
                     }
-                    draw_centered(&title, y, 40.0, name_color);
+                    draw_centered(title, y, size, name_color);
                     draw_centered(
-                        &subtitle,
+                        subtitle,
                         y + 24.0,
                         18.0,
-                        Color::new(1.0, 1.0, 1.0, if selected { 0.55 } else { 0.25 }),
+                        Color::new(1.0, 1.0, 1.0, if selected { 0.55 * a } else { 0.25 * a }),
                     );
                     if selected {
                         // Difficulty selector for this row
-                        let joined: Vec<String> = diff_opts
-                            .iter()
-                            .enumerate()
-                            .map(|(i, (_, n))| {
-                                if i == *diff_sel {
-                                    format!("[ {} ]", n)
-                                } else {
-                                    n.to_string()
-                                }
-                            })
-                            .collect();
+                        let joined: Vec<String> =
+                            diff_opts
+                                .iter()
+                                .enumerate()
+                                .map(|(i, (_, n))| {
+                                    if i == *diff_sel {
+                                        format!("[ {} ]", n)
+                                    } else {
+                                        n.to_string()
+                                    }
+                                })
+                                .collect();
                         draw_centered(
                             &joined.join("   "),
                             y + 48.0,
                             20.0,
-                            wa(th().accent, 0.85),
+                            wa(th().accent, 0.85 * a),
                         );
                     }
                 }
@@ -1552,14 +1734,19 @@ async fn main() {
                     wa(th().accent, 0.45),
                 );
                 let text_mode = if sentence_mode() { "SENTENCES" } else { "WORDS" };
+                let off_ms = CALIB_MS.load(Ordering::Relaxed);
                 draw_centered(
-                    &format!("M — text: {}    ·    T — theme: {}", text_mode, th().name),
+                    &format!(
+                        "M — text: {}    ·    T — theme: {}    ·    C — calibrate ({off_ms:+} ms)",
+                        text_mode,
+                        th().name
+                    ),
                     hint_y + 56.0,
                     20.0,
                     wa(th().secondary, 0.7),
                 );
                 draw_centered(
-                    "up/down: song   ·   left/right: difficulty   ·   enter: play   ·   esc: quit song",
+                    "up/down: song   ·   left/right: difficulty   ·   enter: play   ·   esc: pause",
                     hint_y + 84.0,
                     18.0,
                     Color::new(1.0, 1.0, 1.0, 0.3),
@@ -1568,17 +1755,55 @@ async fn main() {
 
             Scene::Playing(play) => {
                 if is_key_pressed(KeyCode::Escape) {
-                    engine.stop_timeline();
-                    scene = Scene::Menu { sel: 0, diff_sel: 0 };
+                    play.paused = !play.paused;
+                    if play.paused {
+                        play.pause_now = engine.timeline_pos();
+                    }
+                    engine.set_paused(play.paused);
+                    engine.play(&sounds.hat, 0.4);
+                }
+                if play.paused {
+                    if is_key_pressed(KeyCode::Q) {
+                        engine.set_paused(false);
+                        engine.stop_timeline();
+                        let sel = play.song_ref.song;
+                        scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
+                        next_frame().await;
+                        continue;
+                    }
+                    // Keystrokes made while paused never reach judgement
+                    while get_char_pressed().is_some() {}
+                    play.draw(play.pause_now);
+                    draw_rectangle(
+                        0.0,
+                        0.0,
+                        screen_width(),
+                        screen_height(),
+                        Color::new(0.0, 0.0, 0.0, 0.55),
+                    );
+                    draw_centered(
+                        "PAUSED",
+                        screen_height() * 0.42,
+                        72.0,
+                        Color::new(1.0, 1.0, 1.0, 0.95),
+                    );
+                    draw_centered(
+                        "esc: resume   ·   q: quit to menu",
+                        screen_height() * 0.42 + 44.0,
+                        22.0,
+                        Color::new(1.0, 1.0, 1.0, 0.55),
+                    );
                     next_frame().await;
                     continue;
                 }
-                // The audio hardware's frame counter is the game clock
+                // The audio hardware's frame counter is the game clock; the
+                // judged clock additionally carries the calibration offset
                 let now = engine.timeline_pos();
+                let jnow = now - calib_offset();
                 while let Some(c) = get_char_pressed() {
-                    play.handle_char(c, now, &sounds, &engine);
+                    play.handle_char(c, jnow, &sounds, &engine);
                 }
-                play.update(now, &sounds, &engine);
+                play.update(now, jnow, &sounds, &engine);
                 play.draw(now);
 
                 if play.finished(now) {
@@ -1601,20 +1826,20 @@ async fn main() {
 
             Scene::Results(r) => {
                 if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Escape) {
-                    scene = Scene::Menu { sel: 0, diff_sel: 0 };
+                    let sel = r.song_ref.song;
+                    scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
                     next_frame().await;
                     continue;
                 }
                 if is_key_pressed(KeyCode::R) {
                     engine.play(&sounds.kick, 0.5);
                     let SongRef { song, diff } = r.song_ref;
-                    clear_background(th().bg);
-                    draw_centered("loading ...", screen_height() * 0.5, 30.0, WHITE);
-                    next_frame().await;
-                    match start_chart_song(&songs, song, diff, &mut stem_cache, &engine, &sounds) {
-                        Some(p) => scene = Scene::Playing(Box::new(p)),
-                        None => scene = Scene::Menu { sel: 0, diff_sel: 0 },
-                    }
+                    let rx = spawn_loader(
+                        songs[song].source.clone(),
+                        engine.sample_rate,
+                        stem_cache.clone(),
+                    );
+                    scene = Scene::Loading { rx, song, diff, title: songs[song].title.clone() };
                     next_frame().await;
                     continue;
                 }
@@ -1655,6 +1880,180 @@ async fn main() {
                     680.0,
                     20.0,
                     Color::new(1.0, 1.0, 1.0, 0.4),
+                );
+            }
+
+            Scene::Loading { rx, song, diff, title } => {
+                match rx.try_recv() {
+                    Ok(LoadMsg::Done(loaded)) => {
+                        let (song, diff) = (*song, *diff);
+                        let LoadedSong { chart, backing, lead } = *loaded;
+                        stem_cache =
+                            Some((songs[song].source.clone(), backing.clone(), lead.clone()));
+                        // Fall back to the hardest charted difficulty if the
+                        // requested one is empty or trivial
+                        let mut d = diff.min(3);
+                        if chart.diffs[d].len() < 20 {
+                            if let Some(best) = (0..4).rev().find(|&i| chart.diffs[i].len() >= 20) {
+                                d = best;
+                            }
+                        }
+                        let play =
+                            Play::new_chart(song, d, &chart, &engine, &sounds, backing, lead);
+                        status_error = None;
+                        scene = Scene::Playing(Box::new(play));
+                    }
+                    Ok(LoadMsg::Failed(e)) => {
+                        status_error = Some(format!("{title}: {e}"));
+                        let sel = *song;
+                        scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
+                    }
+                    Err(TryRecvError::Disconnected) => {
+                        status_error = Some(format!("{title}: loader thread died"));
+                        let sel = *song;
+                        scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
+                    }
+                    Err(TryRecvError::Empty) => {
+                        // Still decoding on the worker thread: keep animating
+                        clear_background(th().bg);
+                        draw_centered(
+                            &format!("loading  {}", title),
+                            screen_height() * 0.44,
+                            30.0,
+                            WHITE,
+                        );
+                        let bw = 280.0;
+                        let bx = screen_width() / 2.0 - bw / 2.0;
+                        let by = screen_height() * 0.5;
+                        draw_rectangle(bx, by, bw, 4.0, Color::new(1.0, 1.0, 1.0, 0.12));
+                        let ph = ((get_time() * 0.8) % 1.0) as f32;
+                        let sw = 90.0;
+                        let sx = bx - sw + (bw + sw) * ph;
+                        let (x0, x1) = (sx.max(bx), (sx + sw).min(bx + bw));
+                        if x1 > x0 {
+                            draw_rectangle(x0, by, x1 - x0, 4.0, wa(th().accent, 0.9));
+                        }
+                    }
+                }
+            }
+
+            Scene::Calibrate(cal) => {
+                let now = engine.timeline_pos();
+                if is_key_pressed(KeyCode::Escape) {
+                    engine.stop_timeline();
+                    scene = Scene::Menu { sel: 0, diff_sel: 0, scroll: 0.0 };
+                    next_frame().await;
+                    continue;
+                }
+                let ready = cal.taps.len() >= 4;
+                if is_key_pressed(KeyCode::Enter) && ready {
+                    let ms = (median(&cal.taps) * 1000.0).round() as i64;
+                    CALIB_MS.store(ms, Ordering::Relaxed);
+                    engine.stop_timeline();
+                    engine.play(&sounds.kick, 0.5);
+                    scene = Scene::Menu { sel: 0, diff_sel: 0, scroll: 0.0 };
+                    next_frame().await;
+                    continue;
+                }
+                // Any letter (or space) is a tap; offset vs the nearest tick
+                while let Some(c) = get_char_pressed() {
+                    let c = c.to_ascii_lowercase();
+                    if (is_typeable(c) || c == ' ') && now > -0.25 {
+                        let nearest = (now / CALIB_PERIOD).round() * CALIB_PERIOD;
+                        cal.taps.push(now - nearest);
+                        if cal.taps.len() > 24 {
+                            cal.taps.remove(0);
+                        }
+                    }
+                }
+                // Keep the metronome stocked a few ticks ahead
+                if now > cal.scheduled_until - 3.0 {
+                    for i in 0..8 {
+                        engine.play_at(
+                            &sounds.hat,
+                            0.8,
+                            cal.scheduled_until + i as f64 * CALIB_PERIOD,
+                        );
+                    }
+                    cal.scheduled_until += 8.0 * CALIB_PERIOD;
+                }
+
+                clear_background(th().bg);
+                draw_centered("CALIBRATION", 120.0, 48.0, Color::new(1.0, 1.0, 1.0, 0.95));
+                draw_centered(
+                    "tap any letter key exactly on each tick",
+                    162.0,
+                    20.0,
+                    wa(th().secondary, 0.8),
+                );
+                let (cx, cyy) = (screen_width() / 2.0, screen_height() * 0.40);
+                if now.is_finite() {
+                    let ph = (now.rem_euclid(CALIB_PERIOD) / CALIB_PERIOD) as f32;
+                    draw_circle_lines(
+                        cx,
+                        cyy,
+                        30.0 + 40.0 * ph,
+                        3.0,
+                        wa(th().accent, 1.0 - 0.85 * ph),
+                    );
+                }
+                draw_circle(cx, cyy, 10.0, wa(th().accent, 0.9));
+
+                // Tap scatter: early taps land left of center, late taps right
+                let aw = 320.0;
+                let ay = screen_height() * 0.60;
+                draw_line(
+                    cx - aw / 2.0,
+                    ay,
+                    cx + aw / 2.0,
+                    ay,
+                    2.0,
+                    Color::new(1.0, 1.0, 1.0, 0.15),
+                );
+                draw_line(cx, ay - 10.0, cx, ay + 10.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.3));
+                dtext(
+                    "early",
+                    cx - aw / 2.0 - 4.0,
+                    ay + 26.0,
+                    15.0,
+                    Color::new(1.0, 1.0, 1.0, 0.3),
+                );
+                let ld = msize("late", 15);
+                dtext(
+                    "late",
+                    cx + aw / 2.0 - ld.width + 4.0,
+                    ay + 26.0,
+                    15.0,
+                    Color::new(1.0, 1.0, 1.0, 0.3),
+                );
+                let n = cal.taps.len();
+                for (i, d) in cal.taps.iter().enumerate() {
+                    let x =
+                        (cx + (*d as f32 / 0.150) * (aw / 2.0)).clamp(cx - aw / 2.0, cx + aw / 2.0);
+                    let a = 0.2 + 0.6 * (i + 1) as f32 / n as f32;
+                    draw_circle(x, ay, 4.0, Color::new(1.0, 1.0, 1.0, a));
+                }
+                if !cal.taps.is_empty() {
+                    let m = median(&cal.taps);
+                    let mx =
+                        (cx + (m as f32 / 0.150) * (aw / 2.0)).clamp(cx - aw / 2.0, cx + aw / 2.0);
+                    draw_line(mx, ay - 14.0, mx, ay + 14.0, 3.0, wa(th().accent, 0.9));
+                    draw_centered(
+                        &format!("offset {:+.0} ms   ({} taps)", m * 1000.0, n),
+                        ay + 58.0,
+                        24.0,
+                        wa(th().accent, 0.9),
+                    );
+                }
+                draw_centered(
+                    if ready {
+                        "enter: apply   ·   esc: cancel"
+                    } else {
+                        "tap along with at least 4 ticks   ·   esc: cancel"
+                    },
+                    screen_height() - 80.0,
+                    20.0,
+                    Color::new(1.0, 1.0, 1.0, 0.45),
                 );
             }
         }

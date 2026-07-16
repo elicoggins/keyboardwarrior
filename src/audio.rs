@@ -8,6 +8,10 @@
 //
 // Everything is mixed in one place: song stems (backing + duckable lead) and
 // synthesized one-shots (drums, plucks, UI ticks) share the same callback.
+//
+// Real-time hygiene: the callback never frees big buffers — retired stems are
+// shipped back to the main thread over a channel and dropped there (reap()) —
+// and the voice list is pre-reserved so ordinary play doesn't allocate.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -21,14 +25,27 @@ pub type Buf = Arc<Vec<[f32; 2]>>;
 
 enum Cmd {
     /// Play a one-shot now.
-    Play { buf: Buf, vol: f32 },
+    Play {
+        buf: Buf,
+        vol: f32,
+    },
     /// Play a one-shot at an exact timeline position (seconds).
-    PlayAt { buf: Buf, vol: f32, time: f64 },
+    PlayAt {
+        buf: Buf,
+        vol: f32,
+        time: f64,
+    },
     /// Begin a timeline whose zero lands at global frame `start_frame`,
     /// with optional music stems that start exactly there.
-    StartTimeline { start_frame: u64, backing: Option<Buf>, lead: Option<Buf> },
+    StartTimeline {
+        start_frame: u64,
+        backing: Option<Buf>,
+        lead: Option<Buf>,
+    },
     /// Duck or restore the lead stem (smoothed in the callback).
     SetLeadGain(f32),
+    /// Freeze or resume the timeline (and everything scheduled on it).
+    SetPaused(bool),
     StopTimeline,
 }
 
@@ -37,6 +54,7 @@ struct Voice {
     vol: f32,
     pos: usize,
     start_frame: u64,
+    scheduled: bool, // timeline-relative: shifts with the timeline while paused
 }
 
 struct Timeline {
@@ -45,6 +63,7 @@ struct Timeline {
     lead: Option<Buf>,
     lead_gain: f32,
     lead_target: f32,
+    paused: bool,
 }
 
 struct ClockSmooth {
@@ -56,9 +75,12 @@ pub struct AudioEngine {
     pub sample_rate: u32,
     frames: Arc<AtomicU64>, // total frames submitted to the device
     tx: Sender<Cmd>,
-    timeline_start: AtomicU64, // game-side copy, frames
+    // Shared with the callback: while paused the callback slides this forward
+    // in lockstep with the device clock so the position holds still.
+    timeline_start: Arc<AtomicU64>,
     epoch: Instant,
     smooth: Mutex<ClockSmooth>,
+    garbage_rx: Receiver<Buf>, // buffers retired by the callback, dropped here
     _stream: cpal::Stream,
 }
 
@@ -71,15 +93,29 @@ impl AudioEngine {
         let channels = config.channels() as usize;
 
         let frames = Arc::new(AtomicU64::new(0));
+        let timeline_start = Arc::new(AtomicU64::new(u64::MAX));
         let (tx, rx) = channel::<Cmd>();
+        let (garbage_tx, garbage_rx) = channel::<Buf>();
 
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => {
-                build_stream::<f32>(&device, &config.into(), channels, frames.clone(), rx)
-            }
-            cpal::SampleFormat::I16 => {
-                build_stream::<i16>(&device, &config.into(), channels, frames.clone(), rx)
-            }
+            cpal::SampleFormat::F32 => build_stream::<f32>(
+                &device,
+                &config.into(),
+                channels,
+                frames.clone(),
+                timeline_start.clone(),
+                rx,
+                garbage_tx,
+            ),
+            cpal::SampleFormat::I16 => build_stream::<i16>(
+                &device,
+                &config.into(),
+                channels,
+                frames.clone(),
+                timeline_start.clone(),
+                rx,
+                garbage_tx,
+            ),
             other => panic!("unsupported sample format: {other:?}"),
         };
         stream.play().expect("failed to start audio stream");
@@ -88,9 +124,10 @@ impl AudioEngine {
             sample_rate,
             frames,
             tx,
-            timeline_start: AtomicU64::new(u64::MAX),
+            timeline_start,
             epoch: Instant::now(),
             smooth: Mutex::new(ClockSmooth { offset: 0.0, init: false }),
+            garbage_rx,
             _stream: stream,
         }
     }
@@ -100,8 +137,8 @@ impl AudioEngine {
         let _ = self.tx.send(Cmd::Play { buf: buf.clone(), vol });
     }
 
-    /// Schedule a one-shot at an exact timeline position — used by the
-    /// built-in song so its synth events land sample-accurately.
+    /// Schedule a one-shot at an exact timeline position — used by count-in
+    /// ticks and the calibration metronome so they land sample-accurately.
     pub fn play_at(&self, buf: &Buf, vol: f32, time: f64) {
         let _ = self.tx.send(Cmd::PlayAt { buf: buf.clone(), vol, time });
     }
@@ -125,6 +162,21 @@ impl AudioEngine {
 
     pub fn set_lead_gain(&self, gain: f32) {
         let _ = self.tx.send(Cmd::SetLeadGain(gain));
+    }
+
+    /// Freeze or resume the timeline. While paused the callback advances the
+    /// timeline's start frame with the device clock, so the position — and
+    /// every one-shot scheduled on it — holds still.
+    pub fn set_paused(&self, paused: bool) {
+        self.smooth.lock().unwrap().init = false;
+        let _ = self.tx.send(Cmd::SetPaused(paused));
+    }
+
+    /// Drop buffers the callback has retired. Called from the main thread
+    /// once per frame so multi-hundred-MB stem frees never happen on the
+    /// real-time audio thread.
+    pub fn reap(&self) {
+        while self.garbage_rx.try_recv().is_ok() {}
     }
 
     /// Current timeline position in seconds (negative during the count-in).
@@ -152,14 +204,27 @@ impl AudioEngine {
     }
 }
 
+/// Ship a retired timeline's stems to the main thread for dropping. If the
+/// engine is already gone (app exit) the send fails and they drop here, which
+/// no longer matters.
+fn retire(garbage: &Sender<Buf>, timeline: Option<Timeline>) {
+    if let Some(t) = timeline {
+        for buf in [t.backing, t.lead].into_iter().flatten() {
+            let _ = garbage.send(buf);
+        }
+    }
+}
+
 fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     channels: usize,
     frames: Arc<AtomicU64>,
+    timeline_start: Arc<AtomicU64>,
     rx: Receiver<Cmd>,
+    garbage: Sender<Buf>,
 ) -> cpal::Stream {
-    let mut voices: Vec<Voice> = Vec::new();
+    let mut voices: Vec<Voice> = Vec::with_capacity(64);
     let mut timeline: Option<Timeline> = None;
     let sample_rate = config.sample_rate.0 as f64;
 
@@ -172,7 +237,13 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     let now = frames.load(Ordering::Relaxed);
                     match cmd {
                         Cmd::Play { buf, vol } => {
-                            voices.push(Voice { buf, vol, pos: 0, start_frame: now });
+                            voices.push(Voice {
+                                buf,
+                                vol,
+                                pos: 0,
+                                start_frame: now,
+                                scheduled: false,
+                            });
                         }
                         Cmd::PlayAt { buf, vol, time } => {
                             let start_frame = match &timeline {
@@ -182,15 +253,19 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                                 }
                                 None => now,
                             };
-                            voices.push(Voice { buf, vol, pos: 0, start_frame });
+                            voices.push(Voice { buf, vol, pos: 0, start_frame, scheduled: true });
                         }
                         Cmd::StartTimeline { start_frame, backing, lead } => {
+                            retire(&garbage, timeline.take());
+                            // Unplayed one-shots from the old timeline die with it
+                            voices.retain(|v| !v.scheduled || v.pos > 0);
                             timeline = Some(Timeline {
                                 start_frame,
                                 backing,
                                 lead,
                                 lead_gain: 1.0,
                                 lead_target: 1.0,
+                                paused: false,
                             });
                         }
                         Cmd::SetLeadGain(g) => {
@@ -198,7 +273,15 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                                 t.lead_target = g;
                             }
                         }
-                        Cmd::StopTimeline => timeline = None,
+                        Cmd::SetPaused(p) => {
+                            if let Some(t) = timeline.as_mut() {
+                                t.paused = p;
+                            }
+                        }
+                        Cmd::StopTimeline => {
+                            retire(&garbage, timeline.take());
+                            voices.retain(|v| !v.scheduled || v.pos > 0);
+                        }
                     }
                 }
 
@@ -206,6 +289,7 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                 let nframes = out.len() / channels;
                 // ~8 ms exponential gain smoothing for the lead stem
                 let gain_k = 1.0 - (-1.0 / (0.008 * sample_rate as f32)).exp();
+                let paused = timeline.as_ref().is_some_and(|t| t.paused);
 
                 for i in 0..nframes {
                     let gf = start + i as u64;
@@ -213,7 +297,7 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     let mut r = 0.0f32;
 
                     if let Some(t) = timeline.as_mut() {
-                        if gf >= t.start_frame {
+                        if !t.paused && gf >= t.start_frame {
                             let idx = (gf - t.start_frame) as usize;
                             if let Some(b) = &t.backing {
                                 if let Some(s) = b.get(idx) {
@@ -232,7 +316,7 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     }
 
                     for v in voices.iter_mut() {
-                        if gf >= v.start_frame {
+                        if gf >= v.start_frame && !(paused && v.scheduled) {
                             if let Some(s) = v.buf.get(v.pos) {
                                 l += s[0] * v.vol;
                                 r += s[1] * v.vol;
@@ -249,6 +333,21 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     }
                     for c in 2..channels {
                         out[i * channels + c] = T::from_sample(0.0f32);
+                    }
+                }
+
+                // While paused the timeline start slides forward with the
+                // device clock, so its position (and every not-yet-started
+                // one-shot scheduled on it) holds still.
+                if paused {
+                    if let Some(t) = timeline.as_mut() {
+                        t.start_frame += nframes as u64;
+                        timeline_start.store(t.start_frame, Ordering::Relaxed);
+                    }
+                    for v in voices.iter_mut() {
+                        if v.scheduled && v.pos == 0 {
+                            v.start_frame += nframes as u64;
+                        }
                     }
                 }
 
