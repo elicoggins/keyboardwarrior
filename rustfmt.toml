@@ -1,0 +1,4 @@
+# Match the codebase's compact style: keep short items on one line rather
+# than exploding every struct literal and match arm vertically.
+max_width = 100
+use_small_heuristics = "Max"
