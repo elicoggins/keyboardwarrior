@@ -21,8 +21,14 @@ use chart::{SongChart, SongSource, DIFF_NAMES};
 const PERFECT_WIN: f64 = 0.055;
 const GREAT_WIN: f64 = 0.110;
 const GOOD_WIN: f64 = 0.170;
-// How long a note is visible before it reaches the strike line
-const APPROACH: f64 = 1.5;
+// How long a note is visible before it reaches the strike line — the board
+// scroll speed. V cycles the presets in the menu; shorter time = faster.
+const SPEEDS: [(&str, f64); 4] = [("SLOW", 2.6), ("NORMAL", 2.0), ("FAST", 1.5), ("TURBO", 1.1)];
+static SPEED_IDX: AtomicUsize = AtomicUsize::new(1);
+
+fn approach() -> f64 {
+    SPEEDS[SPEED_IDX.load(Ordering::Relaxed) % SPEEDS.len()].1
+}
 // Calibration metronome period (120 BPM)
 const CALIB_PERIOD: f64 = 0.5;
 
@@ -123,15 +129,39 @@ const THEMES: [Theme; 3] = [
 ];
 
 static THEME_IDX: AtomicUsize = AtomicUsize::new(0);
-static SENTENCE_MODE: AtomicBool = AtomicBool::new(false);
 static SUSTAINS: AtomicBool = AtomicBool::new(true);
+
+/// What rides on the gems.
+#[derive(Clone, Copy, PartialEq)]
+enum TextMode {
+    Words,     // length-matched real words, one per phrase
+    Sentences, // coherent sentences streamed letter by letter
+    Dfjk,      // four keys, four lanes — gems are amalgams of d/f/j/k
+    Practice,  // random letters from a player-tuned key set
+}
+
+const TEXT_MODES: [(TextMode, &str); 4] = [
+    (TextMode::Words, "WORDS"),
+    (TextMode::Sentences, "SENTENCES"),
+    (TextMode::Dfjk, "DFJK"),
+    (TextMode::Practice, "PRACTICE"),
+];
+static TEXT_MODE_IDX: AtomicUsize = AtomicUsize::new(0);
+
+// Typing-practice filters: which parts of the keyboard the letters come from
+static PRAC_LEFT: AtomicBool = AtomicBool::new(true);
+static PRAC_RIGHT: AtomicBool = AtomicBool::new(true);
+static PRAC_TOP: AtomicBool = AtomicBool::new(true);
+static PRAC_HOME: AtomicBool = AtomicBool::new(true);
+static PRAC_BOTTOM: AtomicBool = AtomicBool::new(true);
+static PRAC_PUNCT: AtomicBool = AtomicBool::new(true);
 
 fn th() -> &'static Theme {
     &THEMES[THEME_IDX.load(Ordering::Relaxed) % THEMES.len()]
 }
 
-fn sentence_mode() -> bool {
-    SENTENCE_MODE.load(Ordering::Relaxed)
+fn text_mode() -> TextMode {
+    TEXT_MODES[TEXT_MODE_IDX.load(Ordering::Relaxed) % TEXT_MODES.len()].0
 }
 
 fn sustains_on() -> bool {
@@ -219,10 +249,10 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "job", "too", "men", "box", "gay", "air", "yes", "hot", "say", "san", "tax", "got", "let",
         "act", "red", "key", "few", "age", "pay", "war", "fax", "yet", "rss", "run", "put", "try",
         "log", "fun", "lot", "ask", "due", "pro", "ago", "via", "bad", "far", "oil", "bit", "bay",
-        "bar", "dog", "usr", "gas", "six", "pre", "zip", "bid", "inn", "los", "win", "bed", "sea",
-        "cut", "tel", "kit", "boy", "son", "mac", "bin", "van", "ads", "pop", "hit", "eye", "fee",
-        "las", "aid", "fat", "saw", "tom", "led", "fan", "ten", "cat", "die", "pet", "guy", "dev",
-        "cup", "lee", "bob", "fit", "met", "ice", "sec", "bus", "bag", "ibm",
+        "bar", "dog", "gas", "six", "pre", "zip", "bid", "inn", "los", "win", "bed", "sea", "cut",
+        "tel", "kit", "boy", "son", "mac", "bin", "van", "ads", "pop", "hit", "eye", "fee", "las",
+        "aid", "fat", "saw", "tom", "led", "fan", "ten", "cat", "die", "pet", "guy", "dev", "cup",
+        "lee", "bob", "fit", "met", "ice", "sec", "bus", "bag", "ibm",
     ],
     &[
         "that", "this", "with", "from", "your", "have", "more", "will", "home", "page", "free",
@@ -243,7 +273,12 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "word", "bill", "talk", "kids", "true", "else", "mark", "rock", "tips", "plus", "auto",
         "edit", "fast", "fact", "unit", "tech", "meet", "feel", "bank", "risk", "town", "girl",
         "toys", "golf", "loan", "wide", "sort", "half", "step", "none", "paul", "lake", "fire",
-        "chat", "loss",
+        "chat", "loss", "bird", "bear", "bell", "barn", "calm", "cave", "clay", "coal", "cool",
+        "cozy", "crab", "crow", "dawn", "deer", "dish", "dove", "drum", "dusk", "fern", "flag",
+        "foam", "frog", "gate", "gaze", "glow", "goat", "gulf", "hawk", "hill", "hive", "hush",
+        "kite", "lamb", "leaf", "lime", "lush", "mint", "mist", "moon", "moss", "myth", "nest",
+        "palm", "pine", "pond", "rain", "reef", "sail", "sand", "seed", "silk", "snow", "song",
+        "surf", "swan", "tide", "twig", "vine", "wave", "wind", "wolf", "wool", "yarn", "zoom",
     ],
     &[
         "about", "other", "which", "their", "there", "first", "would", "these", "click", "price",
@@ -266,6 +301,17 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "error", "clear", "makes", "india", "taken", "known", "cases", "quick", "whole", "later",
         "basic", "shows", "along", "among", "death", "speed", "brand", "stuff", "japan", "doing",
         "loans", "shoes", "entry", "notes", "force", "river", "album", "views", "plans", "build",
+        "amber", "apple", "berry", "birch", "bloom", "brave", "bread", "brick", "brook", "candy",
+        "cedar", "charm", "chess", "chill", "cider", "cloud", "coral", "crane", "cream", "crisp",
+        "crown", "dance", "dream", "drift", "eagle", "ember", "fable", "fairy", "feast", "fence",
+        "fever", "flame", "flock", "flora", "flute", "frost", "glaze", "gleam", "globe", "grace",
+        "grape", "grove", "happy", "hazel", "honey", "horse", "juice", "koala", "lemon", "lilac",
+        "lunar", "mango", "maple", "melon", "merry", "mocha", "moose", "noble", "ocean", "olive",
+        "onion", "opera", "otter", "panda", "peach", "pearl", "pedal", "penny", "piano", "pilot",
+        "pixel", "plaza", "polar", "prism", "quilt", "raven", "ridge", "roast", "robin", "royal",
+        "salsa", "shine", "shore", "smile", "spark", "spice", "storm", "sugar", "sunny", "swirl",
+        "tiger", "toast", "torch", "trail", "tribe", "tulip", "vivid", "wagon", "whale", "wheat",
+        "zebra",
     ],
     &[
         "search", "people", "health", "should", "system", "policy", "number", "please", "rights",
@@ -288,6 +334,26 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "skills", "advice", "career", "rental", "middle", "taking", "values", "coming", "object",
         "length", "client", "follow", "sample", "george", "choice", "artist", "levels", "letter",
         "phones", "summer", "degree", "button", "matter", "custom", "almost", "editor", "female",
+        "bakery", "ballet", "bamboo", "banana", "basket", "beacon", "bottle", "branch", "breeze",
+        "bridge", "bright", "bronze", "bubble", "bucket", "butter", "candle", "canyon", "carpet",
+        "castle", "celery", "cereal", "cheese", "cherry", "circus", "clever", "closet", "cobweb",
+        "coffee", "copper", "cosmic", "cotton", "coyote", "cradle", "crayon", "dazzle", "decade",
+        "desert", "dinner", "doctor", "donkey", "dragon", "drawer", "effort", "eleven", "empire",
+        "escape", "exotic", "fabric", "falcon", "fiddle", "finger", "flavor", "forest", "fossil",
+        "frozen", "galaxy", "garage", "gentle", "ginger", "golden", "guitar", "hammer", "harbor",
+        "helmet", "hidden", "hollow", "honest", "hunter", "indigo", "insect", "jacket", "jaguar",
+        "jungle", "kettle", "kitten", "ladder", "lagoon", "laptop", "legend", "lively", "lizard",
+        "locker", "lumber", "magnet", "marble", "meadow", "melody", "mellow", "mirror", "mitten",
+        "modest", "monkey", "mosaic", "mother", "muffin", "museum", "mystic", "native", "nectar",
+        "noodle", "nugget", "oyster", "paddle", "palace", "parade", "pastel", "pebble", "pencil",
+        "pepper", "picnic", "pigeon", "pillow", "pirate", "planet", "pocket", "polish", "pollen",
+        "poster", "potato", "pretty", "purple", "puzzle", "rabbit", "raisin", "ripple", "rocket",
+        "rubber", "saddle", "salmon", "shadow", "shrimp", "signal", "sonnet", "spider", "spiral",
+        "splash", "spring", "sprout", "squash", "stable", "stereo", "stitch", "stormy", "stream",
+        "string", "sturdy", "subtle", "sunset", "temple", "tender", "thrive", "timber", "tomato",
+        "trophy", "turtle", "tuxedo", "twelve", "valley", "velvet", "violet", "violin", "voyage",
+        "waffle", "walnut", "walrus", "wander", "wallet", "warmth", "willow", "winter", "wisdom",
+        "wizard", "wonder", "yogurt", "zigzag",
     ],
     &[
         "contact", "service", "product", "support", "message", "through", "privacy", "company",
@@ -307,7 +373,27 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "florida", "license", "holiday", "writing", "effects", "created", "kingdom", "thought",
         "storage", "summary", "western", "overall", "package", "players", "started", "someone",
         "printer", "believe", "nothing", "certain", "running", "jewelry", "islands", "british",
-        "sellers", "tuesday", "lesbian", "machine",
+        "sellers", "tuesday", "machine", "morning", "evening", "weekend", "journey", "freedom",
+        "courage", "diamond", "emerald", "thunder", "rainbow", "sunrise", "horizon", "volcano",
+        "tornado", "whisper", "mystery", "magical", "crystal", "feather", "blanket", "caramel",
+        "capture", "captain", "cartoon", "ceiling", "century", "channel", "charity", "chicken",
+        "chimney", "clarity", "classic", "climate", "clothes", "coastal", "comfort", "compass",
+        "concert", "cottage", "cricket", "crimson", "cupcake", "curious", "custard", "dolphin",
+        "drawing", "dreamer", "eclipse", "economy", "elegant", "embrace", "emotion", "explore",
+        "factory", "fantasy", "fiction", "fitness", "forever", "fortune", "forward", "genuine",
+        "giraffe", "glacier", "glitter", "granite", "gravity", "grocery", "habitat", "hallway",
+        "hammock", "harmony", "harvest", "highway", "husband", "iceberg", "imagine", "inspire",
+        "instant", "jasmine", "justice", "kitchen", "lantern", "laundry", "leather", "lettuce",
+        "liberty", "lobster", "mansion", "mineral", "miracle", "monarch", "monsoon", "monster",
+        "musical", "mustang", "nowhere", "oatmeal", "obvious", "octopus", "orchard", "organic",
+        "outdoor", "outside", "pancake", "panther", "partner", "passion", "pathway", "patient",
+        "peacock", "penguin", "perfect", "phantom", "pioneer", "playful", "popcorn", "prairie",
+        "pretzel", "promise", "pumpkin", "pyramid", "quietly", "radiant", "reality", "reflect",
+        "respect", "rooster", "sailing", "sausage", "seagull", "seaside", "shelter", "silence",
+        "sincere", "skyline", "sparrow", "spinach", "stadium", "station", "stellar", "strange",
+        "stretch", "sunbeam", "supreme", "sweater", "teacher", "theater", "tonight", "tractor",
+        "triumph", "trumpet", "unicorn", "uniform", "vampire", "vanilla", "victory", "village",
+        "vintage", "visitor", "wealthy", "whistle", "wildcat", "workout",
     ],
     &[
         "business", "services", "products", "research", "comments", "national", "shipping",
@@ -325,7 +411,37 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "exchange", "continue", "benefits", "anything", "mortgage", "solution", "addition",
         "clothing", "homepage", "military", "decision", "division", "actually", "saturday",
         "starting", "thursday", "consumer", "contract", "releases", "virginia", "multiple",
-        "featured", "friendly", "schedule", "everyone", "approach",
+        "featured", "friendly", "schedule", "everyone", "approach", "mountain", "sunshine",
+        "thinking", "daughter", "favorite", "elephant", "umbrella", "sandwich", "birthday",
+        "notebook", "keyboard", "painting", "distance", "medicine", "straight", "strength",
+        "shoulder", "treasure", "campaign", "festival", "hospital", "universe", "creative",
+        "pleasure", "surprise", "champion", "midnight", "daylight", "backyard", "baseball",
+        "football", "swimming", "vacation", "airplane", "dinosaur", "squirrel", "kangaroo",
+        "laughter", "graceful", "powerful", "peaceful", "grateful", "handsome", "generous",
+        "absolute", "accurate", "alphabet", "ancestor", "appetite", "attitude", "audience",
+        "backpack", "bathroom", "blizzard", "boundary", "broccoli", "carnival", "ceremony",
+        "chemical", "chestnut", "cinnamon", "clarinet", "colorful", "composer", "concrete",
+        "confetti", "corridor", "creature", "crescent", "critical", "crossing", "cucumber",
+        "currency", "darkness", "deadline", "delicate", "describe", "dialogue", "discover",
+        "doorbell", "downtown", "dramatic", "dreaming", "driveway", "electric", "elegance",
+        "emphasis", "engineer", "envelope", "estimate", "eternity", "evidence", "exercise",
+        "explorer", "fabulous", "familiar", "firewood", "flamingo", "fountain", "frontier",
+        "geometry", "goldfish", "graduate", "handmade", "hardware", "headline", "heavenly",
+        "hedgehog", "humorous", "identity", "infinite", "innocent", "instance", "interior",
+        "jealousy", "junction", "lakeside", "landmark", "lavender", "lemonade", "likewise",
+        "listener", "majestic", "marathon", "meantime", "memorial", "merchant", "molecule",
+        "momentum", "monument", "mosquito", "movement", "mushroom", "mystical", "neighbor",
+        "nonsense", "northern", "observer", "obstacle", "occasion", "opponent", "opposite",
+        "ordinary", "ornament", "outdoors", "overcome", "overlook", "paradise", "parallel",
+        "particle", "passport", "patience", "peculiar", "physical", "platform", "positive",
+        "precious", "presence", "princess", "priority", "quantity", "reaction", "reindeer",
+        "relative", "romantic", "sapphire", "scenario", "scissors", "seashell", "seasonal",
+        "sentence", "separate", "serenade", "shepherd", "sidewalk", "skeleton", "snowfall",
+        "southern", "specimen", "spectrum", "stairway", "stranger", "strategy", "struggle",
+        "suburban", "sunlight", "symphony", "teaspoon", "tendency", "textbook", "thousand",
+        "timeless", "tomorrow", "towering", "traveler", "treasury", "triangle", "tropical",
+        "twilight", "ultimate", "upstairs", "valuable", "vertical", "vineyard", "westward",
+        "wildlife", "windmill", "wondrous", "workshop", "yearbook",
     ],
 ];
 
@@ -399,23 +515,79 @@ impl WordDeck {
     }
 }
 
+/// The keys typing practice may draw from, honoring the hand, row, and
+/// punctuation filters. Punctuation keys count as right-hand. Filtering
+/// everything away falls back to the home index keys.
+fn practice_keys() -> Vec<char> {
+    let rows: [(&str, &AtomicBool); 3] =
+        [("qwertyuiop", &PRAC_TOP), ("asdfghjkl'", &PRAC_HOME), ("zxcvbnm,.", &PRAC_BOTTOM)];
+    let mut keys = Vec::new();
+    for (row, row_on) in rows {
+        if !row_on.load(Ordering::Relaxed) {
+            continue;
+        }
+        for c in row.chars() {
+            let punct = !c.is_ascii_alphabetic();
+            let left = "qwertasdfgzxcvb".contains(c);
+            let hand = if left { &PRAC_LEFT } else { &PRAC_RIGHT };
+            if !hand.load(Ordering::Relaxed) || (punct && !PRAC_PUNCT.load(Ordering::Relaxed)) {
+                continue;
+            }
+            keys.push(c);
+        }
+    }
+    if keys.is_empty() {
+        keys = vec!['f', 'j'];
+    }
+    keys
+}
+
+/// A pseudo-word: `len` random keys from `set`, avoiding immediate doubles
+/// (one re-roll — rare doubles read as intentional jacks, runs don't).
+fn random_word(len: usize, set: &[char]) -> String {
+    let pick = || set[macroquad::rand::gen_range(0usize, set.len()).min(set.len() - 1)];
+    let mut out = String::with_capacity(len);
+    let mut prev = '\0';
+    for _ in 0..len {
+        let mut c = pick();
+        if c == prev {
+            c = pick();
+        }
+        out.push(c);
+        prev = c;
+    }
+    out
+}
+
 /// Generate the text for a run. `groups` are the phrase sizes (note counts).
-/// WORDS mode: one length-matched word per phrase. SENTENCES mode: coherent
-/// sentences streamed across the same total number of notes.
+/// WORDS: one length-matched word per phrase. SENTENCES: coherent sentences
+/// streamed across the same total number of notes. DFJK: amalgams of the
+/// four lane keys. PRACTICE: random letters from the player-tuned key set.
 fn generate_text(groups: &[usize]) -> Vec<String> {
-    let mut decks: Vec<WordDeck> = WORDS_BY_LEN.iter().map(|p| WordDeck::new(p)).collect();
-    if !sentence_mode() {
-        return groups
-            .iter()
-            .map(|&len| {
-                let idx = (len - 1).min(WORDS_BY_LEN.len() - 1);
-                decks[idx].next().to_string()
-            })
-            .collect();
+    match text_mode() {
+        TextMode::Words => {
+            let mut decks: Vec<WordDeck> = WORDS_BY_LEN.iter().map(|p| WordDeck::new(p)).collect();
+            return groups
+                .iter()
+                .map(|&len| {
+                    let idx = (len - 1).min(WORDS_BY_LEN.len() - 1);
+                    decks[idx].next().to_string()
+                })
+                .collect();
+        }
+        TextMode::Dfjk => {
+            return groups.iter().map(|&len| random_word(len, &['d', 'f', 'j', 'k'])).collect();
+        }
+        TextMode::Practice => {
+            let keys = practice_keys();
+            return groups.iter().map(|&len| random_word(len, &keys)).collect();
+        }
+        TextMode::Sentences => {}
     }
 
     // Sentences: deal whole sentences until the letter budget is spent,
     // topping off the tail with an exact-length word so every note has a letter
+    let mut decks: Vec<WordDeck> = WORDS_BY_LEN.iter().map(|p| WordDeck::new(p)).collect();
     let total: usize = groups.iter().sum();
     let mut order: Vec<usize> = (0..SENTENCES.len()).collect();
     shuffle(&mut order);
@@ -495,6 +667,7 @@ struct Note {
 /// down, until the tail runs out or the finger lifts.
 struct Hold {
     note: usize,
+    key: char,    // the key actually pressed — in DFJK mode any key in the lane
     end: f64,     // timeline second the tail runs out
     partial: f32, // fractional bonus score carried between frames
 }
@@ -507,6 +680,17 @@ fn lane_of(c: char) -> usize {
         // i/k/o/l/p plus the unshifted punctuation keys , . ' — right outer
         _ => 3,
     }
+}
+
+/// The lane a character rides in (gems) or aims at (keypresses). In DFJK
+/// mode the four anchor keys pin to the four lanes — f, j, and k already
+/// live in lanes 1–3, only d needs moving — and every other key keeps its
+/// zone, so q still plays the D lane.
+fn gem_lane(c: char) -> usize {
+    if c == 'd' && text_mode() == TextMode::Dfjk {
+        return 0;
+    }
+    lane_of(c)
 }
 
 /// Characters that can appear on gems: letters plus unshifted punctuation.
@@ -660,7 +844,8 @@ struct Play {
     // notes index where each word starts (notes are sorted, words contiguous)
     word_starts: Vec<usize>,
     holds: Vec<Hold>, // sustains currently being held
-    whammying: bool,  // SHIFT is bending an active sustain
+    whammying: bool,  // SHIFT is pressing the whammy bar on an active sustain
+    whammy_vis: f32,  // eased bar position, drives the tail's bow on screen
     paused: bool,
     pause_now: f64, // clock value frozen at the moment of pausing, for draw
     ducked: bool,   // lead stem is currently ducked after a miss
@@ -704,9 +889,9 @@ fn geom() -> Geom {
 }
 
 /// Highway y for a timeline second: the strike line at `now`, the top of the
-/// highway one APPROACH later.
+/// highway one approach-time later.
 fn time_to_y(t: f64, g: &Geom, now: f64) -> f32 {
-    g.hit_y - (((t - now) / APPROACH) as f32) * (g.hit_y - g.top)
+    g.hit_y - (((t - now) / approach()) as f32) * (g.hit_y - g.top)
 }
 
 /// The strike line, drawn as five segments with gaps at the lane centers so
@@ -728,6 +913,27 @@ fn draw_strike_line(g: &Geom, ox: f32, oy: f32, thickness: f32, color: Color) {
     }
 }
 
+/// RMS level of a stereo buffer in a ±50 ms window around `t` seconds.
+fn rms_around(buf: &[[f32; 2]], rate: u32, t: f64) -> f32 {
+    let a = ((t - 0.05) * rate as f64).max(0.0) as usize;
+    let b = (((t + 0.05) * rate as f64) as usize).min(buf.len());
+    if b <= a {
+        return 0.0;
+    }
+    let sum: f32 = buf[a..b].iter().map(|s| s[0] * s[0] + s[1] * s[1]).sum();
+    (sum / (b - a) as f32).sqrt()
+}
+
+/// Beat spacing of the tempo map at time `t`, in seconds per beat. Clamped
+/// to 40–300 BPM so a degenerate map can't stretch the count-in absurdly.
+fn beat_interval_at(beats: &[f64], t: f64) -> f64 {
+    if beats.len() < 2 {
+        return 0.5;
+    }
+    let i = beats.partition_point(|&b| b <= t).clamp(1, beats.len() - 1);
+    (beats[i] - beats[i - 1]).clamp(0.2, 1.5)
+}
+
 /// Stream the text's letters onto note (time, sustain) pairs in order: letter
 /// k of the text rides note k. Word boundaries drive the on-screen word queue.
 fn assign_letters(words: &[String], times: &[(f64, f64)]) -> Vec<Note> {
@@ -743,7 +949,7 @@ fn assign_letters(words: &[String], times: &[(f64, f64)]) -> Vec<Note> {
         li += 1;
         notes.push(Note {
             ch,
-            lane: lane_of(ch),
+            lane: gem_lane(ch),
             time: t,
             sustain: len,
             word: wi,
@@ -834,14 +1040,42 @@ impl Play {
             }
         }
 
-        let spb = if chart.beats.len() > 1 { chart.beats[1] - chart.beats[0] } else { 0.5 };
         let first = notes.first().map_or(0.0, |n| n.time);
+        // Beat interval measured AT the first note — charts can change tempo
+        // (or open with a placeholder bar) before the notes start, so
+        // beats[1]-beats[0] can count at the wrong speed
+        let spb = beat_interval_at(&chart.beats, first);
         let end_time = chart.end + 3.0;
-        // Three-second lead-in; the stems begin at exactly timeline zero,
-        // with four tempo-matched count-in ticks scheduled sample-exact
-        engine.start_timeline(3.0, Some(backing), lead);
-        for i in 1..=4 {
-            engine.play_at(&snd.hat, 0.6, -(i as f64) * spb);
+        // The stems begin at exactly timeline zero. Count-in: four hi-hat
+        // ticks on the real beat grid walking into the FIRST NOTE — matching
+        // the on-screen countdown. (Counting into timeline zero is useless:
+        // charts pad seconds of empty bars before the notes.) The grid
+        // extends backward, and the lead-in stretches, when a chart opens
+        // immediately.
+        let bi = chart.beats.partition_point(|&b| b < first - 1e-6);
+        let ticks: Vec<f64> = (1..=4usize)
+            .map(|k| bi.checked_sub(k).map_or(first - k as f64 * spb, |j| chart.beats[j]))
+            .collect();
+        // ...but only when the recording is quiet under them. Plenty of rips
+        // open with their own stick count or a musical intro; a synthesized
+        // click on top plays flams against the one or fights the other, so
+        // there the recording itself is the count. "Most quiet", not "all":
+        // the last tick often brushes the swell of the music coming in.
+        let quiet_at = |t: f64| {
+            let mut r = rms_around(&backing, engine.sample_rate, t);
+            if let Some(l) = &lead {
+                r += rms_around(l, engine.sample_rate, t);
+            }
+            r < 0.05
+        };
+        let count_in = ticks.iter().filter(|&&t| quiet_at(t)).count() >= 3;
+        let earliest = ticks.last().copied().unwrap_or(0.0);
+        let lead_in = if count_in { (0.4 - earliest).max(3.0) } else { 3.0 };
+        engine.start_timeline(lead_in, Some(backing), lead);
+        if count_in {
+            for &t in &ticks {
+                engine.play_at(&snd.hat, 0.8, t);
+            }
         }
         Self::from_parts(
             SongRef { song: song_idx, diff },
@@ -884,6 +1118,7 @@ impl Play {
             word_starts,
             holds: Vec::new(),
             whammying: false,
+            whammy_vis: 0.0,
             paused: false,
             pause_now: 0.0,
             ducked: false,
@@ -987,6 +1222,9 @@ impl Play {
         }
         let g = geom();
 
+        // DFJK mode judges by lane, not letter: any key aimed at the gem's
+        // lane counts, so q hits the D lane, m hits the J lane, and so on
+        let by_lane = text_mode() == TextMode::Dfjk;
         self.advance_cursor();
         let mut best: Option<(usize, f64)> = None;
         for i in self.cursor..self.notes.len() {
@@ -994,7 +1232,8 @@ impl Play {
             if n.time - now > GOOD_WIN {
                 break; // notes are sorted by time
             }
-            if n.state != NoteState::Pending || n.ch != c {
+            let matches = if by_lane { n.lane == gem_lane(c) } else { n.ch == c };
+            if n.state != NoteState::Pending || !matches {
                 continue;
             }
             let dt = now - n.time;
@@ -1051,7 +1290,12 @@ impl Play {
                 // A sustained gem starts a hold: keep the key down for bonus
                 if self.notes[i].sustain > 0.0 {
                     let n = &self.notes[i];
-                    self.holds.push(Hold { note: i, end: n.time + n.sustain, partial: 0.0 });
+                    self.holds.push(Hold {
+                        note: i,
+                        key: c,
+                        end: n.time + n.sustain,
+                        partial: 0.0,
+                    });
                 }
                 // A clean hit brings the ducked lead stem back into the mix
                 if self.ducked {
@@ -1113,8 +1357,9 @@ impl Play {
 
         // Sustain holds: bonus score drips in while the key stays down.
         // Lifting early just stops the bonus — no combo break, like GH.
-        // SHIFT is the whammy bar: it bends the lead's pitch, doubles the
-        // drip, and trickles star power while a sustain is held.
+        // SHIFT is the whammy bar: holding it keeps the lead bent down and
+        // fattened, releasing returns it to normal. While pressed on a
+        // sustain it also doubles the drip and trickles star power.
         let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
         let mult = self.multiplier(jnow) as f32 * if shift { 2.0 } else { 1.0 };
         let mut holds = std::mem::take(&mut self.holds);
@@ -1125,7 +1370,7 @@ impl Play {
                 done.push(h.note);
                 return false;
             }
-            if !key_down(self.notes[h.note].ch) {
+            if !key_down(h.key) {
                 return false;
             }
             h.partial += dt * 60.0 * mult;
@@ -1148,6 +1393,8 @@ impl Play {
             self.whammying = whammy;
             engine.set_whammy(if whammy { 1.0 } else { 0.0 });
         }
+        // Eased bar position for the tail's bow, mirroring the audio ramp
+        self.whammy_vis += ((whammy as i32 as f32) - self.whammy_vis) * (1.0 - (-dt * 13.0).exp());
 
         // Effects
         for p in self.particles.iter_mut() {
@@ -1195,6 +1442,7 @@ impl Play {
     fn draw(&self, now: f64) {
         let g = geom();
         let h = screen_height();
+        let ap = approach();
 
         let (ox, oy) = if self.shake > 0.0 {
             (
@@ -1220,10 +1468,10 @@ impl Play {
         let lo = self.beats.partition_point(|&b| b < now);
         for bi in lo..self.beats.len() {
             let t = self.beats[bi];
-            if t > now + APPROACH {
+            if t > now + ap {
                 break;
             }
-            let progress = ((t - now) / APPROACH) as f32;
+            let progress = ((t - now) / ap) as f32;
             let y = g.hit_y - progress * travel + oy;
             let alpha = if bi % 4 == 0 { 0.14 } else { 0.05 };
             draw_line(
@@ -1247,15 +1495,17 @@ impl Play {
             draw_circle_lines(x, g.hit_y + oy, 24.0, 2.0, c);
         }
 
-        // Only notes near the highway need drawing: anything more than one
-        // approach-window old is far below the screen, anything more than one
-        // ahead hasn't entered it. Notes are sorted, so this is a slice.
-        let visible_lo = self.notes.partition_point(|n| n.time < now - APPROACH);
+        // Only notes near the screen need drawing: anything more than one
+        // approach-window old is far below it. Ahead, the window is stretched
+        // past the highway top so gems spawn above the window edge and drift
+        // in instead of popping in at the top. Notes are sorted: a slice.
+        let spawn_ap = ap * ((g.hit_y + 60.0) / (g.hit_y - g.top)) as f64;
+        let visible_lo = self.notes.partition_point(|n| n.time < now - ap);
 
         // Connectors between letters of the same word
         for w in self.notes[visible_lo.saturating_sub(1)..].windows(2) {
             let (a, b) = (&w[0], &w[1]);
-            if a.time - now > APPROACH {
+            if a.time - now > spawn_ap {
                 break;
             }
             if a.word != b.word || a.state != NoteState::Pending || b.state != NoteState::Pending {
@@ -1263,7 +1513,7 @@ impl Play {
             }
             let pa = self.note_pos(a, &g, now) + vec2(ox, oy);
             let pb = self.note_pos(b, &g, now) + vec2(ox, oy);
-            if pa.y < g.top - 40.0 && pb.y < g.top - 40.0 {
+            if pa.y < -60.0 && pb.y < -60.0 {
                 continue;
             }
             draw_line(pa.x, pa.y, pb.x, pb.y, 2.0, Color::new(1.0, 1.0, 1.0, 0.13));
@@ -1272,36 +1522,35 @@ impl Play {
         // Sustain tails run from each gem up toward its release point; drawn
         // under the gems so the gem caps the tail's base
         for n in &self.notes[visible_lo..] {
-            if n.time - now > APPROACH {
+            if n.time - now > spawn_ap {
                 break;
             }
             if n.sustain <= 0.0 || n.state != NoteState::Pending {
                 continue;
             }
             let pos = self.note_pos(n, &g, now) + vec2(ox, oy);
-            if pos.y < g.top - 40.0 || pos.y > h + 40.0 {
+            if pos.y < -60.0 || pos.y > h + 40.0 {
                 continue;
             }
-            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(g.top - 10.0);
+            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(-20.0);
             draw_line(pos.x, pos.y, pos.x, y_end, 5.0, wa(th().lane[n.lane], 0.22));
         }
 
         // Gems
         let radius = (g.lane_w * 0.26).min(24.0);
         for n in &self.notes[visible_lo..] {
-            if n.time - now > APPROACH {
+            if n.time - now > spawn_ap {
                 break;
             }
             let pos = self.note_pos(n, &g, now) + vec2(ox, oy);
-            if pos.y < g.top - 40.0 || pos.y > h + 40.0 {
+            if pos.y < -60.0 || pos.y > h + 40.0 {
                 continue;
             }
             match n.state {
                 NoteState::Pending => {
                     // Dark-bodied gem with a lane-colored ring and letter —
                     // reads as part of the theme instead of a solid disc
-                    let closeness =
-                        (1.0 - ((n.time - now) / APPROACH).clamp(0.0, 1.0) as f32).powi(2);
+                    let closeness = (1.0 - ((n.time - now) / ap).clamp(0.0, 1.0) as f32).powi(2);
                     let lane_c = th().lane[n.lane];
                     let mut glow = lane_c;
                     glow.a = 0.08 + 0.20 * closeness;
@@ -1340,28 +1589,46 @@ impl Play {
         }
 
         // Active holds: the remaining tail drains into a glowing anchor on
-        // the strike line while the key stays down; the whammy bends the
-        // tail into a wobble
+        // the strike line while the key stays down. Pressing the whammy bar
+        // fattens the tail and sends a wave rippling down it — pulsing in
+        // time with the audio's pitch pump — releasing lets it slim and
+        // straighten again, GH-style.
         for hd in &self.holds {
             let n = &self.notes[hd.note];
             let x = g.left + g.lane_w * (n.lane as f32 + 0.5) + ox;
-            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(g.top - 10.0);
+            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(-20.0);
             let c = th().lane[n.lane];
-            if self.whammying {
-                let t = get_time() as f32;
-                let mut prev = vec2(x, g.hit_y + oy);
-                let mut yy = g.hit_y + oy - 9.0;
-                while yy > y_end {
-                    let p = vec2(x + (yy * 0.11 + t * 26.0).sin() * 5.0, yy);
-                    draw_line(prev.x, prev.y, p.x, p.y, 7.0, wa(c, 0.75));
+            let vis = self.whammy_vis;
+            // Same pump rate as the audio LFO, so width and pitch breathe as one
+            let pump_ph = now * std::f64::consts::TAU * audio::WH_PUMP_HZ;
+            let pump = (0.5 - 0.5 * pump_ph.cos()) as f32;
+            let thick = 7.0 + (6.0 + 2.5 * pump) * vis;
+            if vis > 0.02 {
+                let anchor = g.hit_y + oy;
+                let wave_t = pump_ph as f32;
+                let mut prev = vec2(x, anchor);
+                let mut yy = anchor - 9.0;
+                loop {
+                    let seg_y = yy.max(y_end);
+                    let d = anchor - seg_y; // distance up the tail, px
+                                            // Traveling wave, pinned at the anchor so the base stays
+                                            // planted on the strike line
+                    let amp = 6.5 * vis * (d / 60.0).min(1.0);
+                    let p = vec2(x + (d * 0.055 + wave_t).sin() * amp, seg_y);
+                    // Soft halo under the core line doubles the tail's body
+                    draw_line(prev.x, prev.y, p.x, p.y, thick + 8.0, wa(c, 0.22 * vis));
+                    draw_line(prev.x, prev.y, p.x, p.y, thick, wa(c, 0.78));
+                    if seg_y <= y_end {
+                        break;
+                    }
                     prev = p;
                     yy -= 9.0;
                 }
-                draw_line(prev.x, prev.y, x, y_end, 7.0, wa(c, 0.75));
             } else {
-                draw_line(x, g.hit_y + oy, x, y_end, 7.0, wa(c, 0.75));
+                draw_line(x, g.hit_y + oy, x, y_end, thick, wa(c, 0.75));
             }
-            draw_circle(x, g.hit_y + oy, 12.0, wa(c, 0.9));
+            let pump_r = (3.0 + 2.0 * pump) * vis;
+            draw_circle(x, g.hit_y + oy, 12.0 + pump_r, wa(c, 0.9));
             draw_circle_lines(x, g.hit_y + oy, 19.0 + 3.0 * self.beat_flash, 2.0, wa(c, 0.6));
         }
 
@@ -1613,10 +1880,165 @@ fn draw_frame_graph(log: &std::collections::VecDeque<f32>) {
 struct Calibrate {
     taps: Vec<f64>,       // signed tap offsets vs the nearest tick, seconds
     scheduled_until: f64, // timeline time up to which ticks are queued
+    menu_sel: usize,      // menu selection to restore on the way back out
+}
+
+// ---------------------------------------------------------------- settings
+
+/// One adjustable row on the settings screen.
+#[derive(Clone, Copy, PartialEq)]
+enum SettingRow {
+    TextMode,
+    PracLeft,
+    PracRight,
+    PracTop,
+    PracHome,
+    PracBottom,
+    PracPunct,
+    Theme,
+    Sustains,
+    Speed,
+    Volume,
+    Calibrate,
+}
+
+/// The rows currently on screen: the practice key filters only appear while
+/// the text mode is PRACTICE, indented under it.
+fn settings_rows() -> Vec<SettingRow> {
+    let mut rows = vec![SettingRow::TextMode];
+    if text_mode() == TextMode::Practice {
+        rows.extend([
+            SettingRow::PracLeft,
+            SettingRow::PracRight,
+            SettingRow::PracTop,
+            SettingRow::PracHome,
+            SettingRow::PracBottom,
+            SettingRow::PracPunct,
+        ]);
+    }
+    rows.extend([
+        SettingRow::Theme,
+        SettingRow::Sustains,
+        SettingRow::Speed,
+        SettingRow::Volume,
+        SettingRow::Calibrate,
+    ]);
+    rows
+}
+
+fn cycle(idx: &AtomicUsize, n: usize, dir: i32) {
+    let i = idx.load(Ordering::Relaxed) as i32 + dir;
+    idx.store(i.rem_euclid(n as i32) as usize, Ordering::Relaxed);
+}
+
+fn flip(b: &AtomicBool) {
+    b.store(!b.load(Ordering::Relaxed), Ordering::Relaxed);
+}
+
+fn on_off(b: &AtomicBool) -> &'static str {
+    if b.load(Ordering::Relaxed) {
+        "ON"
+    } else {
+        "OFF"
+    }
+}
+
+impl SettingRow {
+    fn label(self) -> &'static str {
+        match self {
+            SettingRow::TextMode => "text mode",
+            SettingRow::PracLeft => "left hand",
+            SettingRow::PracRight => "right hand",
+            SettingRow::PracTop => "top row",
+            SettingRow::PracHome => "home row",
+            SettingRow::PracBottom => "bottom row",
+            SettingRow::PracPunct => "punctuation",
+            SettingRow::Theme => "theme",
+            SettingRow::Sustains => "sustains",
+            SettingRow::Speed => "speed",
+            SettingRow::Volume => "volume",
+            SettingRow::Calibrate => "calibrate",
+        }
+    }
+
+    fn indented(self) -> bool {
+        matches!(
+            self,
+            SettingRow::PracLeft
+                | SettingRow::PracRight
+                | SettingRow::PracTop
+                | SettingRow::PracHome
+                | SettingRow::PracBottom
+                | SettingRow::PracPunct
+        )
+    }
+
+    fn value(self, engine: &AudioEngine) -> String {
+        match self {
+            SettingRow::TextMode => {
+                TEXT_MODES[TEXT_MODE_IDX.load(Ordering::Relaxed) % TEXT_MODES.len()].1.to_string()
+            }
+            SettingRow::PracLeft => on_off(&PRAC_LEFT).into(),
+            SettingRow::PracRight => on_off(&PRAC_RIGHT).into(),
+            SettingRow::PracTop => on_off(&PRAC_TOP).into(),
+            SettingRow::PracHome => on_off(&PRAC_HOME).into(),
+            SettingRow::PracBottom => on_off(&PRAC_BOTTOM).into(),
+            SettingRow::PracPunct => on_off(&PRAC_PUNCT).into(),
+            SettingRow::Theme => th().name.to_string(),
+            SettingRow::Sustains => on_off(&SUSTAINS).into(),
+            SettingRow::Speed => {
+                SPEEDS[SPEED_IDX.load(Ordering::Relaxed) % SPEEDS.len()].0.to_string()
+            }
+            SettingRow::Volume => format!("{:.0}%", engine.master() * 100.0),
+            SettingRow::Calibrate => format!("{:+} ms", CALIB_MS.load(Ordering::Relaxed)),
+        }
+    }
+
+    fn adjust(self, dir: i32, engine: &AudioEngine) {
+        match self {
+            SettingRow::TextMode => cycle(&TEXT_MODE_IDX, TEXT_MODES.len(), dir),
+            SettingRow::PracLeft => flip(&PRAC_LEFT),
+            SettingRow::PracRight => flip(&PRAC_RIGHT),
+            SettingRow::PracTop => flip(&PRAC_TOP),
+            SettingRow::PracHome => flip(&PRAC_HOME),
+            SettingRow::PracBottom => flip(&PRAC_BOTTOM),
+            SettingRow::PracPunct => flip(&PRAC_PUNCT),
+            SettingRow::Theme => cycle(&THEME_IDX, THEMES.len(), dir),
+            SettingRow::Sustains => flip(&SUSTAINS),
+            SettingRow::Speed => cycle(&SPEED_IDX, SPEEDS.len(), dir),
+            SettingRow::Volume => {
+                engine.set_master(((engine.master() + 0.05 * dir as f32) * 20.0).round() / 20.0);
+            }
+            SettingRow::Calibrate => {} // ENTER opens the metronome instead
+        }
+    }
+
+    fn desc(self) -> &'static str {
+        match self {
+            SettingRow::TextMode => match text_mode() {
+                TextMode::Words => "phrases become real words sized to the beat",
+                TextMode::Sentences => "coherent sentences streamed letter by letter",
+                TextMode::Dfjk => "four keys, four lanes - any key in a lane's zone counts",
+                TextMode::Practice => "random letters - tune which keys appear below",
+            },
+            SettingRow::PracLeft => "letters typed by the left hand",
+            SettingRow::PracRight => "letters typed by the right hand",
+            SettingRow::PracTop => "the qwerty row",
+            SettingRow::PracHome => "the asdf row",
+            SettingRow::PracBottom => "the zxcv row",
+            SettingRow::PracPunct => "comma, period, apostrophe - shift is never needed",
+            SettingRow::Theme => "lane and accent colors",
+            SettingRow::Sustains => "hold long notes for bonus score",
+            SettingRow::Speed => "how long notes stay on the highway",
+            SettingRow::Volume => "master volume - also -/+ from anywhere",
+            SettingRow::Calibrate => "ENTER: tap along to measure your keyboard latency",
+        }
+    }
 }
 
 enum Scene {
     Menu { sel: usize, diff_sel: usize, scroll: f32 },
+    Settings { sel: usize, menu_sel: usize },
     Loading { rx: Receiver<LoadMsg>, song: usize, diff: usize, title: String },
     Playing(Box<Play>),
     Results(Results),
@@ -1814,6 +2236,8 @@ async fn main() {
     let mut show_frame_graph = false;
     let mut frame_log: std::collections::VecDeque<f32> =
         std::collections::VecDeque::with_capacity(FRAME_LOG_LEN);
+    // Seconds left on the master-volume overlay after a -/+ press
+    let mut vol_flash = 0.0f32;
 
     loop {
         // Buffers the audio callback retired get freed here, off the
@@ -1821,6 +2245,14 @@ async fn main() {
         engine.reap();
         if is_key_pressed(KeyCode::F1) {
             show_frame_graph = !show_frame_graph;
+        }
+        // Master volume: -/+ adjusts it from any scene, with a tick at the
+        // new level and a brief overlay to confirm
+        if is_key_pressed(KeyCode::Minus) || is_key_pressed(KeyCode::Equal) {
+            let step = if is_key_pressed(KeyCode::Minus) { -0.05f32 } else { 0.05 };
+            engine.set_master(((engine.master() + step) * 20.0).round() / 20.0);
+            engine.play(&sounds.hat, 0.6);
+            vol_flash = 1.6;
         }
         if frame_log.len() == FRAME_LOG_LEN {
             frame_log.pop_front();
@@ -1873,23 +2305,9 @@ async fn main() {
                     *diff_sel += 1;
                     engine.play(&sounds.hat, 0.4);
                 }
-                if is_key_pressed(KeyCode::T) {
-                    let i = THEME_IDX.load(Ordering::Relaxed);
-                    THEME_IDX.store((i + 1) % THEMES.len(), Ordering::Relaxed);
-                    engine.play(&sounds.kick, 0.4);
-                }
-                if is_key_pressed(KeyCode::M) {
-                    SENTENCE_MODE.store(!sentence_mode(), Ordering::Relaxed);
-                    engine.play(&sounds.kick, 0.4);
-                }
                 if is_key_pressed(KeyCode::S) {
-                    SUSTAINS.store(!sustains_on(), Ordering::Relaxed);
                     engine.play(&sounds.kick, 0.4);
-                }
-                if is_key_pressed(KeyCode::C) {
-                    engine.play(&sounds.kick, 0.4);
-                    engine.start_timeline(1.0, None, None);
-                    scene = Scene::Calibrate(Calibrate { taps: Vec::new(), scheduled_until: 0.0 });
+                    scene = Scene::Settings { sel: 0, menu_sel: *sel };
                     next_frame().await;
                     continue;
                 }
@@ -2032,23 +2450,127 @@ async fn main() {
                     20.0,
                     wa(th().accent, 0.45),
                 );
-                let text_mode = if sentence_mode() { "SENTENCES" } else { "WORDS" };
+                // Read-only snapshot of the current settings; S opens them
+                let mode_name = TEXT_MODES[TEXT_MODE_IDX.load(Ordering::Relaxed) % 4].1;
                 let sus = if sustains_on() { "ON" } else { "OFF" };
                 let off_ms = CALIB_MS.load(Ordering::Relaxed);
-                draw_centered(
+                let speed = SPEEDS[SPEED_IDX.load(Ordering::Relaxed) % SPEEDS.len()].0;
+                draw_fit(
                     &format!(
-                        "M — text: {}   ·   T — theme: {}   ·   S — sustains: {}   ·   C — calibrate ({off_ms:+} ms)",
-                        text_mode,
+                        "{}   ·   {}   ·   sustains {}   ·   {}   ·   {off_ms:+} ms   ·   vol {:.0}%",
+                        mode_name,
                         th().name,
-                        sus
+                        sus,
+                        speed,
+                        engine.master() * 100.0
                     ),
+                    screen_width() / 2.0,
                     hint_y + 56.0,
-                    20.0,
+                    18.0,
+                    screen_width() - 32.0,
+                    wa(th().secondary, 0.55),
+                );
+                draw_centered(
+                    "up/down: song   ·   left/right: difficulty   ·   enter: play   ·   S: settings",
+                    hint_y + 84.0,
+                    18.0,
+                    Color::new(1.0, 1.0, 1.0, 0.3),
+                );
+            }
+
+            Scene::Settings { sel, menu_sel } => {
+                let rows = settings_rows();
+                *sel = (*sel).min(rows.len() - 1);
+                if is_key_pressed(KeyCode::Escape) {
+                    let m = *menu_sel;
+                    scene = Scene::Menu { sel: m, diff_sel: 0, scroll: m as f32 };
+                    next_frame().await;
+                    continue;
+                }
+                if is_key_pressed(KeyCode::Up) {
+                    *sel = (*sel + rows.len() - 1) % rows.len();
+                    engine.play(&sounds.hat, 0.4);
+                }
+                if is_key_pressed(KeyCode::Down) {
+                    *sel = (*sel + 1) % rows.len();
+                    engine.play(&sounds.hat, 0.4);
+                }
+                let row = rows[*sel];
+                let dir =
+                    is_key_pressed(KeyCode::Right) as i32 - is_key_pressed(KeyCode::Left) as i32;
+                if dir != 0 {
+                    row.adjust(dir, &engine);
+                    engine.play(&sounds.kick, 0.4);
+                }
+                if is_key_pressed(KeyCode::Enter) {
+                    if row == SettingRow::Calibrate {
+                        engine.play(&sounds.kick, 0.4);
+                        engine.start_timeline(1.0, None, None);
+                        scene = Scene::Calibrate(Calibrate {
+                            taps: Vec::new(),
+                            scheduled_until: 0.0,
+                            menu_sel: *menu_sel,
+                        });
+                        next_frame().await;
+                        continue;
+                    }
+                    // ENTER nudges any other row forward, so toggles feel right
+                    row.adjust(1, &engine);
+                    engine.play(&sounds.kick, 0.4);
+                }
+                // Cycling away from PRACTICE collapses its filter rows —
+                // rebuild before drawing so this frame shows the new list
+                let rows = settings_rows();
+                *sel = (*sel).min(rows.len() - 1);
+                let row = rows[*sel];
+
+                clear_background(th().bg);
+                let t = get_time();
+                let pulse = ((t * 2.0).sin() * 0.5 + 0.5) as f32;
+                draw_centered("SETTINGS", 130.0, 56.0, Color::new(1.0, 1.0, 1.0, 0.95));
+                let cx = screen_width() / 2.0;
+                let top = 210.0;
+                let spacing = 40.0;
+                for (i, r) in rows.iter().enumerate() {
+                    let y = top + i as f32 * spacing;
+                    let selected = i == *sel;
+                    let indent = if r.indented() { 26.0 } else { 0.0 };
+                    let size = 22.0;
+                    let label_a = if selected {
+                        0.95
+                    } else if r.indented() {
+                        0.42
+                    } else {
+                        0.60
+                    };
+                    let ld = msize(r.label(), size);
+                    let lx = cx - 44.0 - ld.width + indent;
+                    dtext(r.label(), lx, y, size, Color::new(1.0, 1.0, 1.0, label_a));
+                    if selected {
+                        dtext(
+                            ">",
+                            lx - 30.0,
+                            y,
+                            size,
+                            Color::new(1.0, 1.0, 1.0, 0.5 + 0.5 * pulse),
+                        );
+                    }
+                    let v = r.value(&engine);
+                    if selected {
+                        dtext(&format!("< {} >", v), cx + 44.0, y, size, wa(th().accent, 0.95));
+                    } else {
+                        dtext(&v, cx + 60.0, y, size, wa(th().secondary, 0.55));
+                    }
+                }
+                draw_centered(
+                    row.desc(),
+                    top + rows.len() as f32 * spacing + 34.0,
+                    17.0,
                     wa(th().secondary, 0.7),
                 );
                 draw_centered(
-                    "up/down: song   ·   left/right: difficulty   ·   enter: play   ·   esc: pause",
-                    hint_y + 84.0,
+                    "up/down: select   ·   left/right: change   ·   esc: back",
+                    screen_height() - 60.0,
                     18.0,
                     Color::new(1.0, 1.0, 1.0, 0.3),
                 );
@@ -2218,11 +2740,12 @@ async fn main() {
                         // Still decoding on the worker thread: keep animating
                         clear_background(th().bg);
                         draw_centered(
-                            &format!("loading  {}", title),
-                            screen_height() * 0.44,
-                            30.0,
-                            WHITE,
+                            "loading",
+                            screen_height() * 0.44 - 40.0,
+                            20.0,
+                            wa(th().secondary, 0.75),
                         );
+                        draw_centered(title, screen_height() * 0.44, 30.0, WHITE);
                         let bw = 280.0;
                         let bx = screen_width() / 2.0 - bw / 2.0;
                         let by = screen_height() * 0.5;
@@ -2240,9 +2763,17 @@ async fn main() {
 
             Scene::Calibrate(cal) => {
                 let now = engine.timeline_pos();
+                // Both exits land back on the settings screen's calibrate row
+                let back = Scene::Settings {
+                    sel: settings_rows()
+                        .iter()
+                        .position(|r| *r == SettingRow::Calibrate)
+                        .unwrap_or(0),
+                    menu_sel: cal.menu_sel,
+                };
                 if is_key_pressed(KeyCode::Escape) {
                     engine.stop_timeline();
-                    scene = Scene::Menu { sel: 0, diff_sel: 0, scroll: 0.0 };
+                    scene = back;
                     next_frame().await;
                     continue;
                 }
@@ -2252,7 +2783,7 @@ async fn main() {
                     CALIB_MS.store(ms, Ordering::Relaxed);
                     engine.stop_timeline();
                     engine.play(&sounds.kick, 0.5);
-                    scene = Scene::Menu { sel: 0, diff_sel: 0, scroll: 0.0 };
+                    scene = back;
                     next_frame().await;
                     continue;
                 }
@@ -2359,6 +2890,22 @@ async fn main() {
             }
         }
 
+        // Volume overlay: bottom-left, fading out after the last press
+        if vol_flash > 0.0 {
+            vol_flash -= get_frame_time();
+            let a = (vol_flash / 0.4).clamp(0.0, 1.0);
+            let v = engine.master();
+            let (bx, by, bw) = (24.0, screen_height() - 46.0, 150.0);
+            dtext(
+                &format!("VOLUME {:.0}%", v * 100.0),
+                bx,
+                by - 10.0,
+                16.0,
+                Color::new(1.0, 1.0, 1.0, 0.75 * a),
+            );
+            draw_rectangle(bx, by, bw, 6.0, Color::new(1.0, 1.0, 1.0, 0.12 * a));
+            draw_rectangle(bx, by, bw * v, 6.0, wa(th().secondary, 0.85 * a));
+        }
         if show_frame_graph {
             draw_frame_graph(&frame_log);
         }
@@ -2371,9 +2918,24 @@ mod text_tests {
     use super::*;
 
     #[test]
+    fn word_pools_are_clean() {
+        for (i, pool) in WORDS_BY_LEN.iter().enumerate() {
+            let mut seen = std::collections::HashSet::new();
+            for w in *pool {
+                assert_eq!(w.len(), i + 1, "{w:?} doesn't belong in the {}-letter pool", i + 1);
+                assert!(w.chars().all(|c| c.is_ascii_lowercase()), "bad characters in {w:?}");
+                assert!(seen.insert(*w), "duplicate {w:?} in the {}-letter pool", i + 1);
+            }
+        }
+    }
+
+    // All text-mode assertions live in this one test: the mode and practice
+    // filters are process-wide statics, and parallel test threads would race
+    #[test]
     fn generated_text_fits_note_counts_exactly() {
+        use std::sync::atomic::Ordering::Relaxed;
         // WORDS mode: each word length matches its phrase
-        SENTENCE_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
+        TEXT_MODE_IDX.store(0, Relaxed);
         let groups = vec![1, 2, 3, 4, 5, 6, 7, 8, 5, 3, 4, 4, 6, 2];
         let words = generate_text(&groups);
         assert_eq!(words.len(), groups.len());
@@ -2387,7 +2949,7 @@ mod text_tests {
         }
 
         // SENTENCES mode: total letters == total notes, whatever the grouping
-        SENTENCE_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
+        TEXT_MODE_IDX.store(1, Relaxed);
         for total in [10usize, 57, 153, 309, 507] {
             let mut groups = vec![3usize; total / 3];
             match total % 3 {
@@ -2404,6 +2966,42 @@ mod text_tests {
                 );
             }
         }
-        SENTENCE_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
+
+        // DFJK mode: amalgams of the four lane keys, and d pins to lane 0
+        TEXT_MODE_IDX.store(2, Relaxed);
+        let groups = vec![1, 4, 8, 3, 6];
+        let words = generate_text(&groups);
+        for (w, &g) in words.iter().zip(&groups) {
+            assert_eq!(w.len(), g);
+            assert!(w.chars().all(|c| "dfjk".contains(c)), "bad dfjk word {w:?}");
+        }
+        assert_eq!(gem_lane('d'), 0);
+        assert_eq!(gem_lane('f'), 1);
+        assert_eq!(gem_lane('j'), 2);
+        assert_eq!(gem_lane('k'), 3);
+        assert_eq!(gem_lane('q'), 0, "q aims at the D lane");
+        assert_eq!(gem_lane(','), 3, "punctuation aims at the K lane");
+
+        // PRACTICE mode: filters shape the key set, lengths still match
+        TEXT_MODE_IDX.store(3, Relaxed);
+        PRAC_RIGHT.store(false, Relaxed);
+        PRAC_PUNCT.store(false, Relaxed);
+        let words = generate_text(&[6; 20]);
+        for w in &words {
+            assert_eq!(w.len(), 6);
+            assert!(
+                w.chars().all(|c| "qwertasdfgzxcvb".contains(c)),
+                "right hand was off, got {w:?}"
+            );
+        }
+        // Everything off still yields a playable set (home index fallback)
+        PRAC_LEFT.store(false, Relaxed);
+        assert_eq!(practice_keys(), vec!['f', 'j']);
+
+        // Restore defaults for any test that runs after in this process
+        PRAC_LEFT.store(true, Relaxed);
+        PRAC_RIGHT.store(true, Relaxed);
+        PRAC_PUNCT.store(true, Relaxed);
+        TEXT_MODE_IDX.store(0, Relaxed);
     }
 }

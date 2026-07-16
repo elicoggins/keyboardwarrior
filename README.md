@@ -10,6 +10,12 @@ cargo run --release
 
 ## Adding songs — zero conversion
 
+The song library is read from `songs/` at launch — nothing is baked into the
+binary, so add or remove songs freely and just restart the game. A few
+freely-licensed songs are bundled to play out of the box (see
+[songs/README.md](songs/README.md) for licenses); anything else you drop in
+stays local and is never committed.
+
 Drop a Clone Hero song into `songs/` and play. Both forms work as-is:
 
 - **A `.sng` file** straight from [Chorus Encore](https://www.enchor.us):

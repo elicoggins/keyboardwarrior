@@ -464,9 +464,19 @@ pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
             Err(err) => errors.push(format!("{name}: {err}")),
         }
     }
-    entries.sort_by(|a, b| a.title.cmp(&b.title));
+    // The user's own songs first (alphabetical), bundled songs at the bottom
+    let bundled = |e: &SongEntry| {
+        let (SongSource::Folder(p) | SongSource::Sng(p)) = &e.source;
+        p.file_name().is_some_and(|n| BUNDLED.contains(&n.to_string_lossy().as_ref()))
+    };
+    entries.sort_by(|a, b| bundled(a).cmp(&bundled(b)).then_with(|| a.title.cmp(&b.title)));
     (entries, errors)
 }
+
+/// The freely-licensed songs committed to the repo (see songs/README.md).
+/// They sort below user-added songs, so a growing library stays on top.
+const BUNDLED: [&str; 3] =
+    ["Code Monkey.sng", "Discipline.sng", "This Week I've Been Mostly Playing Guitar.sng"];
 
 #[cfg(test)]
 mod sng_tests {

@@ -1,9 +1,14 @@
 # Build artifacts
 /target
 
-# Song library: charts index copyrighted recordings — never commit audio.
-# See README for where to get songs (and freely-licensed options).
-/songs
+# Song library: most charts index copyrighted recordings — those must never
+# be committed, so everything in songs/ is ignored except the freely-licensed
+# bundled songs listed below (licenses in songs/README.md).
+/songs/*
+!/songs/README.md
+!/songs/Code Monkey.sng
+!/songs/Discipline.sng
+!/songs/This Week I've Been Mostly Playing Guitar.sng
 
 # OS junk
 .DS_Store

@@ -13,7 +13,7 @@
 // shipped back to the main thread over a channel and dropped there (reap()) —
 // and the voice list is pre-reserved so ordinary play doesn't allocate.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -22,6 +22,10 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// A decoded, device-rate, stereo sound. Cheap to clone.
 pub type Buf = Arc<Vec<[f32; 2]>>;
+
+/// Whammy pump rate in Hz — how fast the bar bobs while held. The renderer
+/// pulses the sustain tail at the same rate, so width and pitch breathe as one.
+pub const WH_PUMP_HZ: f64 = 4.8;
 
 enum Cmd {
     /// Play a one-shot now.
@@ -44,7 +48,8 @@ enum Cmd {
     },
     /// Duck or restore the lead stem (smoothed in the callback).
     SetLeadGain(f32),
-    /// Whammy amount 0..1: pitch-wobbles the lead stem while engaged.
+    /// Whammy bar position 0..1: 1 holds the lead bent-down and doubled
+    /// (fatter), 0 releases it back to the plain stem.
     SetWhammy(f32),
     /// Freeze or resume the timeline (and everything scheduled on it).
     SetPaused(bool),
@@ -65,9 +70,10 @@ struct Timeline {
     lead: Option<Buf>,
     lead_gain: f32,
     lead_target: f32,
-    whammy: f32, // smoothed toward whammy_target in the callback
+    whammy: f32, // bar position, smoothed toward whammy_target in the callback
     whammy_target: f32,
-    whammy_phase: f32,
+    wh_phase: f64, // grain phase of the pitch-down voice, 0..1
+    wh_lfo: f64,   // pump phase 0..1 — the bar bobbing up and down while held
     paused: bool,
 }
 
@@ -83,6 +89,9 @@ pub struct AudioEngine {
     // Shared with the callback: while paused the callback slides this forward
     // in lockstep with the device clock so the position holds still.
     timeline_start: Arc<AtomicU64>,
+    // Master volume 0..1 as f32 bits, applied to the whole mix in the
+    // callback (smoothed there, so steps never zipper)
+    master: Arc<AtomicU32>,
     epoch: Instant,
     smooth: Mutex<ClockSmooth>,
     garbage_rx: Receiver<Buf>, // buffers retired by the callback, dropped here
@@ -99,6 +108,7 @@ impl AudioEngine {
 
         let frames = Arc::new(AtomicU64::new(0));
         let timeline_start = Arc::new(AtomicU64::new(u64::MAX));
+        let master = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let (tx, rx) = channel::<Cmd>();
         let (garbage_tx, garbage_rx) = channel::<Buf>();
 
@@ -109,6 +119,7 @@ impl AudioEngine {
                 channels,
                 frames.clone(),
                 timeline_start.clone(),
+                master.clone(),
                 rx,
                 garbage_tx,
             ),
@@ -118,6 +129,7 @@ impl AudioEngine {
                 channels,
                 frames.clone(),
                 timeline_start.clone(),
+                master.clone(),
                 rx,
                 garbage_tx,
             ),
@@ -130,6 +142,7 @@ impl AudioEngine {
             frames,
             tx,
             timeline_start,
+            master,
             epoch: Instant::now(),
             smooth: Mutex::new(ClockSmooth { offset: 0.0, init: false }),
             garbage_rx,
@@ -169,10 +182,20 @@ impl AudioEngine {
         let _ = self.tx.send(Cmd::SetLeadGain(gain));
     }
 
-    /// Engage or release the whammy bar (0..1). The callback bends the lead
-    /// stem's pitch with a slow vibrato while it's engaged.
+    /// Whammy bar position (0..1). While pressed the lead stays bent down
+    /// and doubled with the dry stem (fatter); releasing returns it to the
+    /// plain stem. Both transitions glide.
     pub fn set_whammy(&self, amt: f32) {
         let _ = self.tx.send(Cmd::SetWhammy(amt));
+    }
+
+    /// Master volume, 0..1.
+    pub fn master(&self) -> f32 {
+        f32::from_bits(self.master.load(Ordering::Relaxed))
+    }
+
+    pub fn set_master(&self, vol: f32) {
+        self.master.store(vol.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
     }
 
     /// Freeze or resume the timeline. While paused the callback advances the
@@ -226,17 +249,20 @@ fn retire(garbage: &Sender<Buf>, timeline: Option<Timeline>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     channels: usize,
     frames: Arc<AtomicU64>,
     timeline_start: Arc<AtomicU64>,
+    master: Arc<AtomicU32>,
     rx: Receiver<Cmd>,
     garbage: Sender<Buf>,
 ) -> cpal::Stream {
     let mut voices: Vec<Voice> = Vec::with_capacity(64);
     let mut timeline: Option<Timeline> = None;
+    let mut cur_master = f32::from_bits(master.load(Ordering::Relaxed));
     let sample_rate = config.sample_rate.0 as f64;
 
     device
@@ -278,7 +304,8 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                                 lead_target: 1.0,
                                 whammy: 0.0,
                                 whammy_target: 0.0,
-                                whammy_phase: 0.0,
+                                wh_phase: 0.0,
+                                wh_lfo: 0.0,
                                 paused: false,
                             });
                         }
@@ -308,11 +335,16 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                 let nframes = out.len() / channels;
                 // ~8 ms exponential gain smoothing for the lead stem
                 let gain_k = 1.0 - (-1.0 / (0.008 * sample_rate as f32)).exp();
-                // Whammy vibrato: ~40 ms depth ramp, 4.6 Hz wobble, up to
-                // ~8 ms of modulated delay (~2 semitones of bend at peak)
-                let whammy_k = 1.0 - (-1.0 / (0.04 * sample_rate as f32)).exp();
-                let whammy_step = std::f32::consts::TAU * 4.6 / sample_rate as f32;
-                let whammy_depth = 0.008 * sample_rate as f32;
+                // Whammy: while the bar is down a granular pitch-down voice
+                // (dual taps on a drifting delay, triangle-crossfaded) is
+                // layered with the dry stem — a fatter, doubled sound whose
+                // bend depth rides a pump LFO, like a player bobbing the bar,
+                // so the pitch dives and recovers GH-style. Bar travel is
+                // eased over ~80 ms so press and release both glide.
+                let whammy_k = 1.0 - (-1.0 / (0.08 * sample_rate as f32)).exp();
+                let wh_win = 0.06 * sample_rate as f32; // grain window, samples
+                const WH_BEND: f32 = 0.09; // ~1.6 semitones down at full dive
+                let master_target = f32::from_bits(master.load(Ordering::Relaxed));
                 let paused = timeline.as_ref().is_some_and(|t| t.paused);
 
                 for i in 0..nframes {
@@ -323,24 +355,27 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                     if let Some(t) = timeline.as_mut() {
                         if !t.paused && gf >= t.start_frame {
                             let idx = (gf - t.start_frame) as usize;
-                            // Whammy: a sine-modulated delay on the read
-                            // position — a true pitch vibrato. The phase
-                            // rests at zero (zero delay) when released, so
-                            // engaging never clicks.
+                            // Whammy: ease the bar, pump the LFO, and advance
+                            // the grain phase by the momentary dive depth —
+                            // the pitch wobbles down and back while held
                             t.whammy += (t.whammy_target - t.whammy) * whammy_k;
-                            let bend = t.whammy > 0.001;
-                            let delay = if bend {
-                                t.whammy_phase =
-                                    (t.whammy_phase + whammy_step) % std::f32::consts::TAU;
-                                (1.0 - t.whammy_phase.cos()) * 0.5 * t.whammy * whammy_depth
+                            let wh = t.whammy;
+                            let bend = wh > 0.001;
+                            if bend {
+                                t.wh_lfo = (t.wh_lfo + WH_PUMP_HZ / sample_rate).fract();
+                                let pump =
+                                    0.5 - 0.5 * (std::f64::consts::TAU * t.wh_lfo).cos() as f32;
+                                let depth = wh * (0.30 + 0.70 * pump);
+                                t.wh_phase =
+                                    (t.wh_phase + (depth * WH_BEND / wh_win) as f64).fract();
                             } else {
-                                t.whammy_phase = 0.0;
-                                0.0
-                            };
+                                // Each fresh press starts the pump from the top
+                                t.wh_lfo = 0.0;
+                            }
                             if let Some(b) = &t.backing {
-                                // No separate lead stem: bend the whole mix
+                                // No separate lead stem: whammy the whole mix
                                 let s = if bend && t.lead.is_none() {
-                                    sample_at(b, idx as f64 - delay as f64)
+                                    whammy_mix(b, idx, wh, t.wh_phase, wh_win)
                                 } else {
                                     b.get(idx).copied().unwrap_or([0.0; 2])
                                 };
@@ -350,7 +385,7 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                             t.lead_gain += (t.lead_target - t.lead_gain) * gain_k;
                             if let Some(ld) = &t.lead {
                                 let s = if bend {
-                                    sample_at(ld, idx as f64 - delay as f64)
+                                    whammy_mix(ld, idx, wh, t.wh_phase, wh_win)
                                 } else {
                                     ld.get(idx).copied().unwrap_or([0.0; 2])
                                 };
@@ -369,6 +404,10 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
                             }
                         }
                     }
+
+                    // Master volume, smoothed like the lead gain
+                    cur_master += (master_target - cur_master) * gain_k;
+                    let (l, r) = (l * cur_master, r * cur_master);
 
                     // Soft-clip to keep stem sums from cracking
                     let (l, r) = (soft_clip(l), soft_clip(r));
@@ -405,8 +444,25 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
         .expect("failed to build audio stream")
 }
 
+/// The whammied stem sample: the dry signal layered with a pitched-down
+/// voice. The voice is two taps on a delay that drifts backward (a constant
+/// pitch-down), each wrapping where its triangle weight is zero, so grains
+/// never click. Weights sum past 1 on purpose — the held note gets fatter.
+fn whammy_mix(buf: &[[f32; 2]], idx: usize, wh: f32, phase: f64, win: f32) -> [f32; 2] {
+    let dry = buf.get(idx).copied().unwrap_or([0.0; 2]);
+    let mut s = [dry[0] * (1.0 - 0.25 * wh), dry[1] * (1.0 - 0.25 * wh)];
+    for off in [0.0, 0.5] {
+        let q = ((phase + off) % 1.0) as f32;
+        let w = (1.0 - (2.0 * q - 1.0).abs()) * 0.85 * wh;
+        let tap = sample_at(buf, idx as f64 - (q * win) as f64);
+        s[0] += tap[0] * w;
+        s[1] += tap[1] * w;
+    }
+    s
+}
+
 /// Read a stereo buffer at a fractional frame position, linearly
-/// interpolated — the whammy's modulated delay lands between samples.
+/// interpolated — the whammy voice's drifting delay lands between samples.
 fn sample_at(buf: &[[f32; 2]], pos: f64) -> [f32; 2] {
     if pos < 0.0 {
         return [0.0, 0.0];
