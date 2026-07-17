@@ -481,3 +481,58 @@ fn soft_clip(x: f32) -> f32 {
         x.signum() * (0.95 + (x.abs() - 0.95).tanh() * 0.05)
     }
 }
+
+pub struct Sounds {
+    pub kick: Buf,
+    pub hat: Buf,
+    pub miss: Buf,
+}
+
+// ---------------------------------------------------------------- audio synth
+
+/// Synthesize a mono waveform into a device-rate stereo buffer.
+fn synth(rate: u32, dur: f32, f: impl Fn(f32) -> f32) -> Buf {
+    let n = (dur * rate as f32) as usize;
+    Arc::new(
+        (0..n)
+            .map(|i| {
+                let s = f(i as f32 / rate as f32).clamp(-1.0, 1.0);
+                [s, s]
+            })
+            .collect(),
+    )
+}
+
+pub fn make_sounds(rate: u32) -> Sounds {
+    use std::f32::consts::TAU;
+    let noise_cell = std::cell::Cell::new(0x1234_5678u32);
+    let noise = || {
+        let mut s = noise_cell.get();
+        s ^= s << 13;
+        s ^= s >> 17;
+        s ^= s << 5;
+        noise_cell.set(s);
+        (s as f32 / u32::MAX as f32) * 2.0 - 1.0
+    };
+
+    // Kick: pitch sweep 160 -> 45 Hz with fast decay
+    let kick = synth(rate, 0.20, |t| {
+        let freq = 45.0 + 115.0 * (-t * 22.0).exp();
+        (TAU * freq * t).sin() * (-t * 16.0).exp() * 0.9
+    });
+    // Hi-hat: short noise burst (crude high-pass via previous-sample subtract)
+    let prev = std::cell::Cell::new(0.0f32);
+    let hat = synth(rate, 0.05, |t| {
+        let raw = noise();
+        let hp = raw - prev.get() * 0.7;
+        prev.set(raw);
+        hp * (-t * 90.0).exp() * 0.30
+    });
+    // Miss: low buzzy thud
+    let miss = synth(rate, 0.22, |t| {
+        let square = if (TAU * 108.0 * t).sin() > 0.0 { 1.0 } else { -1.0 };
+        square * (-t * 14.0).exp() * 0.30
+    });
+
+    Sounds { kick, hat, miss }
+}
