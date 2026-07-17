@@ -43,7 +43,7 @@ fn calib_offset() -> f64 {
 /// Mini keyboard legend drawn in the menu: every key tinted by its lane, so
 /// the lane-to-hand mapping is shown, not spelled out.
 fn draw_keyboard_legend(center_x: f32, top_y: f32) {
-    let rows: [(&str, f32); 3] = [("qwertyuiop", 0.0), ("asdfghjkl", 0.4), ("zxcvbnm", 1.0)];
+    let rows: [(&str, f32); 3] = [("qwertyuiop", 0.0), ("asdfghjkl;", 0.4), ("zxcvbnm,.", 1.0)];
     let key = 26.0;
     let gap = 5.0;
     let full = 10.0 * (key + gap) - gap;
@@ -130,6 +130,10 @@ const THEMES: [Theme; 3] = [
 
 static THEME_IDX: AtomicUsize = AtomicUsize::new(0);
 static SUSTAINS: AtomicBool = AtomicBool::new(true);
+
+// The lower-left gutter guitarist, benched until his art gets another pass.
+// All of his logic still runs and draws when flipped back on.
+const GUITARIST: bool = false;
 
 /// What rides on the gems.
 #[derive(Clone, Copy, PartialEq)]
@@ -846,6 +850,8 @@ struct Play {
     holds: Vec<Hold>, // sustains currently being held
     whammying: bool,  // SHIFT is pressing the whammy bar on an active sustain
     whammy_vis: f32,  // eased bar position, drives the tail's bow on screen
+    jam: f32,         // the gutter guitarist: 1 rocking out, 0 slumped still
+    strum: f32,       // strum-hand flick, kicked to 1 on every clean hit
     paused: bool,
     pause_now: f64, // clock value frozen at the moment of pausing, for draw
     ducked: bool,   // lead stem is currently ducked after a miss
@@ -1119,6 +1125,8 @@ impl Play {
             holds: Vec::new(),
             whammying: false,
             whammy_vis: 0.0,
+            jam: 1.0,
+            strum: 0.0,
             paused: false,
             pause_now: 0.0,
             ducked: false,
@@ -1126,7 +1134,9 @@ impl Play {
             next_beat: 0,
             sp_phrases,
             energy: 0.0,
-            sp_until: -1.0,
+            // NEG_INFINITY, not -1: the clock is negative during the
+            // count-in, and `now < sp_until` must not read as active there
+            sp_until: f64::NEG_INFINITY,
             word_anim: 0.0,
             spb,
             score: 0,
@@ -1298,15 +1308,19 @@ impl Play {
                     });
                 }
                 // A clean hit brings the ducked lead stem back into the mix
+                // and puts the gutter guitarist back to work
+                self.strum = 1.0;
                 if self.ducked {
                     engine.set_lead_gain(1.0);
                     self.ducked = false;
                 }
             }
             None => {
-                // Stray keypress: no matching note in the window
+                // Stray keypress: no matching note in the window. The
+                // guitarist stumbles but recovers on his own
                 self.strays += 1;
                 self.combo = 0;
+                self.jam = self.jam.min(0.35);
                 self.shake = self.shake.max(3.0);
                 self.float_text("X", vec2(g.left + g.width / 2.0, g.hit_y - 40.0), th().miss, 24.0);
                 engine.play(&snd.miss, 0.18);
@@ -1396,6 +1410,12 @@ impl Play {
         // Eased bar position for the tail's bow, mirroring the audio ramp
         self.whammy_vis += ((whammy as i32 as f32) - self.whammy_vis) * (1.0 - (-dt * 13.0).exp());
 
+        // The guitarist follows the lead stem: while it's ducked after a
+        // miss he stands slumped; the next clean hit winds him back up
+        let jam_t = if self.ducked { 0.0 } else { 1.0 };
+        self.jam += (jam_t - self.jam) * (1.0 - (-dt * 6.0).exp());
+        self.strum = (self.strum - dt * 5.0).max(0.0);
+
         // Effects
         for p in self.particles.iter_mut() {
             p.pos += p.vel * dt;
@@ -1438,6 +1458,89 @@ impl Play {
     }
 
     // ------------------------------------------------------------ rendering
+
+    /// The gutter guitarist: a stylized silhouette in the lower-left, built
+    /// from the same primitives as the board. While the lead is in the mix
+    /// he rocks — bobbing on the beat, near foot tapping, strum hand
+    /// flicking on every clean hit. A miss ducks the lead and he slumps to
+    /// a standstill, guitar neck drooping, until the next hit winds him up.
+    ///
+    /// Benched behind GUITARIST for now — the pose reads but needs art
+    /// passes before he earns the stage. The jam/strum state keeps updating
+    /// either way, so switching him back on is a one-flag change.
+    fn draw_guitarist(&self, now: f64) {
+        if !GUITARIST {
+            return;
+        }
+        let g = geom();
+        if g.left < 140.0 {
+            return; // window too narrow — no gutter to stand in
+        }
+        let h = screen_height();
+        let s = (g.left / 200.0).clamp(0.8, 1.3);
+        let cx = g.left * 0.5;
+        let base = h - 34.0;
+        let jam = self.jam;
+        let slump = 1.0 - jam;
+        let beat = (now / self.spb.max(0.2)) as f32 * std::f32::consts::TAU;
+        let bob = beat.sin() * 4.0 * jam * s;
+        let a = wa(WHITE, 0.20 + 0.18 * jam);
+        let acc = th().accent;
+
+        // Star power puts him under a spotlight
+        if self.sp_active(now) {
+            draw_circle(cx, base - 60.0 * s, 85.0 * s, wa(acc, 0.05));
+        }
+        draw_ellipse(cx, base + 6.0, 44.0 * s, 7.0, 0.0, Color::new(0.0, 0.0, 0.0, 0.35));
+
+        let hip = vec2(cx - 2.0 * s, base - 56.0 * s + bob * 0.4);
+        let sh = vec2(hip.x + 3.0 * s - 7.0 * s * slump, hip.y - 42.0 * s + bob + 7.0 * s * slump);
+        // Legs — the near foot taps while he's going
+        let tap = beat.sin().max(0.0) * 7.0 * jam;
+        draw_line(hip.x, hip.y, cx - 19.0 * s, base - tap, 6.5 * s, a);
+        draw_line(hip.x, hip.y, cx + 15.0 * s, base, 6.5 * s, a);
+        draw_line(sh.x, sh.y, hip.x, hip.y, 10.0 * s, a);
+        // Head nods a half-beat off the body bob, hangs when slumped
+        let head = vec2(
+            sh.x + 3.0 * s - 3.0 * s * slump,
+            sh.y - 17.0 * s + (beat + 1.2).sin() * 3.0 * jam + 5.0 * s * slump,
+        );
+        draw_circle(head.x, head.y, 10.5 * s, a);
+
+        // Guitar: double-bout body on a neck that points up-left and droops
+        // with him
+        let gc = vec2(hip.x + 12.0 * s, hip.y - 8.0 * s + bob * 0.5);
+        let dir = vec2(-1.0, -0.55 + 0.75 * slump).normalize();
+        let neck_end = gc + dir * 58.0 * s;
+        draw_line(gc.x, gc.y, neck_end.x, neck_end.y, 4.0 * s, wa(WHITE, 0.30 + 0.20 * jam));
+        let hs = neck_end + dir * 9.0 * s;
+        draw_line(neck_end.x, neck_end.y, hs.x, hs.y, 6.5 * s, a);
+        draw_circle(gc.x - 7.0 * s, gc.y + 1.0 * s, 14.0 * s, mix(th().bg, acc, 0.30));
+        draw_circle(gc.x + 6.0 * s, gc.y + 2.0 * s, 11.5 * s, mix(th().bg, acc, 0.30));
+        draw_circle_lines(
+            gc.x - 2.0 * s,
+            gc.y + 1.5 * s,
+            13.5 * s,
+            2.0,
+            wa(acc, 0.45 + 0.40 * jam),
+        );
+        draw_circle(gc.x - 2.0 * s, gc.y + 1.0 * s, 3.5 * s, wa(th().bg, 0.9));
+
+        // Fret hand rides the neck; strum arm swings at the body, snapping
+        // with each hit, hanging loose when he stops
+        let fret = neck_end - dir * 12.0 * s;
+        draw_line(sh.x, sh.y, fret.x, fret.y, 5.5 * s, a);
+        draw_circle(fret.x, fret.y, 4.0 * s, a);
+        let swing = beat.sin() * 0.45 * jam + self.strum * 0.55;
+        let ang = 1.15 - swing;
+        let jam_hand = gc + vec2(ang.cos(), ang.sin()) * 21.0 * s;
+        let hang = vec2(sh.x + 6.0 * s, sh.y + 40.0 * s);
+        let hand = hang.lerp(jam_hand, jam);
+        let elbow = vec2(sh.x + 16.0 * s, sh.y + 16.0 * s);
+        draw_line(sh.x, sh.y, elbow.x, elbow.y, 5.5 * s, a);
+        draw_line(elbow.x, elbow.y, hand.x, hand.y, 5.5 * s, a);
+        draw_circle(hand.x, hand.y, 4.0 * s, a);
+    }
 
     fn draw(&self, now: f64) {
         let g = geom();
@@ -1644,6 +1747,8 @@ impl Play {
             let dims = msize(&f.text, f.size);
             dtext(&f.text, f.pos.x - dims.width / 2.0 + ox, f.pos.y + oy, f.size, c);
         }
+
+        self.draw_guitarist(now);
 
         // Word queue below the strike line: the current word large with live
         // per-letter results, upcoming words stacked beneath it smaller and
@@ -1881,6 +1986,7 @@ struct Calibrate {
     taps: Vec<f64>,       // signed tap offsets vs the nearest tick, seconds
     scheduled_until: f64, // timeline time up to which ticks are queued
     menu_sel: usize,      // menu selection to restore on the way back out
+    from_menu: bool,      // entered via the menu hotkey, not the settings row
 }
 
 // ---------------------------------------------------------------- settings
@@ -2305,7 +2411,37 @@ async fn main() {
                     *diff_sel += 1;
                     engine.play(&sounds.hat, 0.4);
                 }
+                // Hotkeys for the common settings, mirrored on the settings
+                // screen (O) — regulars shouldn't need to leave the menu
+                if is_key_pressed(KeyCode::M) {
+                    cycle(&TEXT_MODE_IDX, TEXT_MODES.len(), 1);
+                    engine.play(&sounds.kick, 0.4);
+                }
+                if is_key_pressed(KeyCode::T) {
+                    cycle(&THEME_IDX, THEMES.len(), 1);
+                    engine.play(&sounds.kick, 0.4);
+                }
                 if is_key_pressed(KeyCode::S) {
+                    flip(&SUSTAINS);
+                    engine.play(&sounds.kick, 0.4);
+                }
+                if is_key_pressed(KeyCode::V) {
+                    cycle(&SPEED_IDX, SPEEDS.len(), 1);
+                    engine.play(&sounds.kick, 0.4);
+                }
+                if is_key_pressed(KeyCode::C) {
+                    engine.play(&sounds.kick, 0.4);
+                    engine.start_timeline(1.0, None, None);
+                    scene = Scene::Calibrate(Calibrate {
+                        taps: Vec::new(),
+                        scheduled_until: 0.0,
+                        menu_sel: *sel,
+                        from_menu: true,
+                    });
+                    next_frame().await;
+                    continue;
+                }
+                if is_key_pressed(KeyCode::O) {
                     engine.play(&sounds.kick, 0.4);
                     scene = Scene::Settings { sel: 0, menu_sel: *sel };
                     next_frame().await;
@@ -2439,25 +2575,18 @@ async fn main() {
                 let hint_y = screen_height() - 130.0;
                 draw_keyboard_legend(screen_width() / 2.0, hint_y - 122.0);
                 draw_centered(
-                    "type each gem on the beat  ·  miss and the lead drops out of the mix",
-                    hint_y,
-                    20.0,
-                    Color::new(1.0, 1.0, 1.0, 0.45),
-                );
-                draw_centered(
-                    "gold gems build star power  ·  SPACE unleashes it  ·  SHIFT whammies sustains",
+                    "gold gems build star power  ·  SPACE unleashes it  ·  SHIFT for whammy bar",
                     hint_y + 28.0,
                     20.0,
                     wa(th().accent, 0.45),
                 );
-                // Read-only snapshot of the current settings; S opens them
                 let mode_name = TEXT_MODES[TEXT_MODE_IDX.load(Ordering::Relaxed) % 4].1;
                 let sus = if sustains_on() { "ON" } else { "OFF" };
                 let off_ms = CALIB_MS.load(Ordering::Relaxed);
                 let speed = SPEEDS[SPEED_IDX.load(Ordering::Relaxed) % SPEEDS.len()].0;
                 draw_fit(
                     &format!(
-                        "{}   ·   {}   ·   sustains {}   ·   {}   ·   {off_ms:+} ms   ·   vol {:.0}%",
+                        "M — text: {}   ·   T — theme: {}   ·   S — sustains: {}   ·   V — speed: {}   ·   C — calibrate ({off_ms:+} ms)   ·   -/+ — volume: {:.0}%",
                         mode_name,
                         th().name,
                         sus,
@@ -2466,12 +2595,12 @@ async fn main() {
                     ),
                     screen_width() / 2.0,
                     hint_y + 56.0,
-                    18.0,
+                    20.0,
                     screen_width() - 32.0,
-                    wa(th().secondary, 0.55),
+                    wa(th().secondary, 0.7),
                 );
                 draw_centered(
-                    "up/down: song   ·   left/right: difficulty   ·   enter: play   ·   S: settings",
+                    "up/down: song   ·   left/right: difficulty   ·   enter: play   ·   O: all settings",
                     hint_y + 84.0,
                     18.0,
                     Color::new(1.0, 1.0, 1.0, 0.3),
@@ -2510,6 +2639,7 @@ async fn main() {
                             taps: Vec::new(),
                             scheduled_until: 0.0,
                             menu_sel: *menu_sel,
+                            from_menu: false,
                         });
                         next_frame().await;
                         continue;
@@ -2763,13 +2893,18 @@ async fn main() {
 
             Scene::Calibrate(cal) => {
                 let now = engine.timeline_pos();
-                // Both exits land back on the settings screen's calibrate row
-                let back = Scene::Settings {
-                    sel: settings_rows()
-                        .iter()
-                        .position(|r| *r == SettingRow::Calibrate)
-                        .unwrap_or(0),
-                    menu_sel: cal.menu_sel,
+                // Both exits land back where the player came from: the menu
+                // (C hotkey) or the settings screen's calibrate row
+                let back = if cal.from_menu {
+                    Scene::Menu { sel: cal.menu_sel, diff_sel: 0, scroll: cal.menu_sel as f32 }
+                } else {
+                    Scene::Settings {
+                        sel: settings_rows()
+                            .iter()
+                            .position(|r| *r == SettingRow::Calibrate)
+                            .unwrap_or(0),
+                        menu_sel: cal.menu_sel,
+                    }
                 };
                 if is_key_pressed(KeyCode::Escape) {
                     engine.stop_timeline();
