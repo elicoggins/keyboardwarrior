@@ -6,8 +6,13 @@ edition = "2021"
 [dependencies]
 macroquad = "0.4"
 midly = "0.5"
-cpal = "0.15"
 symphonia = { version = "0.5", default-features = false, features = ["mp3", "ogg", "vorbis", "wav", "pcm", "flac"] }
+
+# Native-only: cpal drives the mixer (the browser demo pulls it from JS
+# instead), and libopus is a C library that doesn't build for wasm — the
+# demo song ships vorbis stems.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+cpal = "0.15"
 ogg = "0.9"
 opus = "0.3"
 

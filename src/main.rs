@@ -17,6 +17,8 @@ mod play;
 mod settings;
 mod sng;
 mod theme;
+#[cfg(target_arch = "wasm32")]
+mod web;
 mod words;
 
 use audio::{make_sounds, AudioEngine, Buf};
@@ -90,9 +92,26 @@ enum LoadMsg {
 
 /// Kick off a song load on a worker thread so the render loop keeps
 /// animating; the Loading scene polls the returned channel.
+#[cfg(not(target_arch = "wasm32"))]
 fn spawn_loader(source: SongSource, rate: u32, cached: StemCache) -> Receiver<LoadMsg> {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
+        let msg = match load_song_full(&source, rate, cached) {
+            Ok(l) => LoadMsg::Done(Box::new(l)),
+            Err(e) => LoadMsg::Failed(e),
+        };
+        let _ = tx.send(msg);
+    });
+    rx
+}
+
+/// No threads on wasm: the decode is deferred a couple of frames (so the
+/// loading screen is visible first) and then runs synchronously on the game
+/// thread — see web::pump in the main loop.
+#[cfg(target_arch = "wasm32")]
+fn spawn_loader(source: SongSource, rate: u32, cached: StemCache) -> Receiver<LoadMsg> {
+    let (tx, rx) = channel();
+    web::defer(move || {
         let msg = match load_song_full(&source, rate, cached) {
             Ok(l) => LoadMsg::Done(Box::new(l)),
             Err(e) => LoadMsg::Failed(e),
@@ -245,7 +264,10 @@ async fn main() {
     prewarm_glyphs();
     let engine = AudioEngine::new();
     let sounds = make_sounds(engine.sample_rate);
+    #[cfg(not(target_arch = "wasm32"))]
     let (songs, scan_errors) = chart::scan_songs(std::path::Path::new("songs"));
+    #[cfg(target_arch = "wasm32")]
+    let (songs, scan_errors) = web::load_demo_library().await;
     let mut stem_cache: StemCache = None;
     // The most recent load failure, shown in the menu until the next attempt
     let mut status_error: Option<String> = None;
@@ -270,6 +292,10 @@ async fn main() {
     let mut vol_flash = 0.0f32;
 
     loop {
+        // Deferred decode jobs (wasm has no loader threads) run here, after
+        // their loading screen has had two frames to reach the display
+        #[cfg(target_arch = "wasm32")]
+        web::pump();
         // Buffers the audio callback retired get freed here, off the
         // real-time thread
         engine.reap();
@@ -295,7 +321,11 @@ async fn main() {
                     clear_background(th().bg);
                     draw_centered("KEYBOARD WARRIOR", 130.0, 72.0, Color::new(1.0, 1.0, 1.0, 0.95));
                     draw_centered(
-                        "no songs found — drop a Clone Hero .sng or song folder into songs/",
+                        if cfg!(target_arch = "wasm32") {
+                            "demo song unavailable — refresh the page to retry"
+                        } else {
+                            "no songs found — drop a Clone Hero .sng or song folder into songs/"
+                        },
                         screen_height() * 0.5,
                         22.0,
                         wa(th().secondary, 0.8),
@@ -319,11 +349,18 @@ async fn main() {
 
                 if is_key_pressed(KeyCode::Up) {
                     *sel = (*sel + rows - 1) % rows;
+                    // Locked signpost rows are never selectable
+                    while songs[*sel].locked {
+                        *sel = (*sel + rows - 1) % rows;
+                    }
                     *diff_sel = 0;
                     engine.play(&sounds.hat, 0.4);
                 }
                 if is_key_pressed(KeyCode::Down) {
                     *sel = (*sel + 1) % rows;
+                    while songs[*sel].locked {
+                        *sel = (*sel + 1) % rows;
+                    }
                     *diff_sel = 0;
                     engine.play(&sounds.hat, 0.4);
                 }
@@ -450,7 +487,10 @@ async fn main() {
                     let focus = (1.0 - off.abs()).clamp(0.0, 1.0);
                     let selected = row == *sel;
                     let size = 26.0 + 14.0 * focus;
-                    let name_color = if selected {
+                    let name_color = if song.locked {
+                        // Signpost rows sit in the wheel but read as inert
+                        wa(th().secondary, 0.35 * a)
+                    } else if selected {
                         wa(th().secondary, a)
                     } else {
                         Color::new(1.0, 1.0, 1.0, (0.40 + 0.15 * focus) * a)
@@ -499,7 +539,12 @@ async fn main() {
                 let hint_y = screen_height() - 130.0;
                 draw_keyboard_legend(screen_width() / 2.0, hint_y - 122.0);
                 draw_centered(
-                    "gold gems build star power  ·  SPACE unleashes it  ·  SHIFT for whammy bar",
+                    // The browser demo has no whammy bar (real app only)
+                    if cfg!(target_arch = "wasm32") {
+                        "gold gems build star power  ·  SPACE unleashes it"
+                    } else {
+                        "gold gems build star power  ·  SPACE unleashes it  ·  SHIFT for whammy bar"
+                    },
                     hint_y + 28.0,
                     20.0,
                     wa(th().accent, 0.45),

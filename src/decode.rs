@@ -13,7 +13,10 @@ use crate::audio::Buf;
 pub fn decode(bytes: &[u8], name: &str, out_rate: u32) -> Result<Buf, String> {
     let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     let (frames, rate) = match ext.as_str() {
+        #[cfg(not(target_arch = "wasm32"))]
         "opus" => decode_opus(bytes)?,
+        #[cfg(target_arch = "wasm32")]
+        "opus" => return Err("opus stems aren't supported in the browser demo".into()),
         _ => decode_symphonia(bytes, &ext)?,
     };
     Ok(Arc::new(resample(frames, rate, out_rate)))
@@ -21,6 +24,7 @@ pub fn decode(bytes: &[u8], name: &str, out_rate: u32) -> Result<Buf, String> {
 
 // ---------------------------------------------------------------- opus
 
+#[cfg(not(target_arch = "wasm32"))]
 fn decode_opus(bytes: &[u8]) -> Result<(Vec<[f32; 2]>, u32), String> {
     let mut reader = ogg::PacketReader::new(Cursor::new(bytes));
     let mut decoder: Option<opus::Decoder> = None;

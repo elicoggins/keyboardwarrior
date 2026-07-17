@@ -1,5 +1,6 @@
 # Build artifacts
 /target
+/web/dist
 
 /songs/*
 !/songs/README.md

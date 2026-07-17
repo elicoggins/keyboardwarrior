@@ -3,7 +3,9 @@
 // are read; what we take from a chart is the charter's *timing* — which beats
 // carry notes — plus star power phrases and the tempo map.
 
-use std::path::{Path, PathBuf};
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::Path;
+use std::path::PathBuf;
 
 use crate::sng::SngFile;
 
@@ -33,11 +35,33 @@ pub struct SongChart {
 }
 
 /// Where a song lives: an unpacked folder, or a .sng straight from
-/// Chorus Encore.
-#[derive(Clone, PartialEq)]
+/// Chorus Encore. The browser demo has no filesystem, so there a song is a
+/// .sng held in memory after being fetched over HTTP.
+#[derive(Clone)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(PartialEq))]
+// On wasm the filesystem variants are never built, but they stay compiled so
+// the loading pipeline is one body of code across both targets.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub enum SongSource {
     Folder(PathBuf),
     Sng(PathBuf),
+    #[cfg(target_arch = "wasm32")]
+    Bytes(std::sync::Arc<Vec<u8>>),
+}
+
+/// On wasm the Bytes variant compares by identity — the demo song is fetched
+/// once and shared, and a 13 MB content compare per cache check would be
+/// wasteful.
+#[cfg(target_arch = "wasm32")]
+impl PartialEq for SongSource {
+    fn eq(&self, other: &SongSource) -> bool {
+        match (self, other) {
+            (SongSource::Folder(a), SongSource::Folder(b)) => a == b,
+            (SongSource::Sng(a), SongSource::Sng(b)) => a == b,
+            (SongSource::Bytes(a), SongSource::Bytes(b)) => std::sync::Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 pub struct SongEntry {
@@ -45,6 +69,9 @@ pub struct SongEntry {
     pub title: String,
     pub artist: String,
     pub available: Vec<usize>, // difficulty indices with notes
+    // A non-playable signpost row (the browser demo's "download to expand
+    // library" entry): drawn dimmed, skipped by menu navigation.
+    pub locked: bool,
 }
 
 // ---------------------------------------------------------------- tempo map
@@ -337,6 +364,20 @@ fn meta_from_pairs<'a>(pairs: impl Iterator<Item = (&'a str, &'a str)>) -> (Stri
     (title, artist, delay)
 }
 
+/// Metadata, notes.mid bytes, and notes.chart text out of an opened .sng.
+type SngNotes = (String, String, f64, Option<Vec<u8>>, Option<String>);
+
+fn sng_notes(sng: &SngFile) -> Result<SngNotes, String> {
+    let (t, a, d) = meta_from_pairs(sng.metadata.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    let mid = if sng.has("notes.mid") { Some(sng.read("notes.mid")?) } else { None };
+    let chart_text = if mid.is_none() && sng.has("notes.chart") {
+        Some(String::from_utf8_lossy(&sng.read("notes.chart")?).to_string())
+    } else {
+        None
+    };
+    Ok((t, a, d, mid, chart_text))
+}
+
 pub fn load_song(source: &SongSource) -> Result<SongChart, String> {
     let (title, artist, delay, mid, chart_text) = match source {
         SongSource::Folder(dir) => {
@@ -350,18 +391,12 @@ pub fn load_song(source: &SongSource) -> Result<SongChart, String> {
             };
             (t, a, d, mid, chart_text)
         }
-        SongSource::Sng(path) => {
-            let sng = SngFile::open(path)?;
-            let (t, a, d) =
-                meta_from_pairs(sng.metadata.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-            let mid = if sng.has("notes.mid") { Some(sng.read("notes.mid")?) } else { None };
-            let chart_text = if mid.is_none() && sng.has("notes.chart") {
-                Some(String::from_utf8_lossy(&sng.read("notes.chart")?).to_string())
-            } else {
-                None
-            };
-            (t, a, d, mid, chart_text)
-        }
+        #[cfg(not(target_arch = "wasm32"))]
+        SongSource::Sng(path) => sng_notes(&SngFile::open(path)?)?,
+        #[cfg(target_arch = "wasm32")]
+        SongSource::Sng(_) => return Err("filesystem songs aren't available in the browser".into()),
+        #[cfg(target_arch = "wasm32")]
+        SongSource::Bytes(bytes) => sng_notes(&SngFile::from_bytes(bytes.clone())?)?,
     };
 
     let mut chart = if let Some(bytes) = mid {
@@ -402,18 +437,25 @@ pub fn stem_files(source: &SongSource) -> Result<Vec<(String, Vec<u8>)>, String>
                 }
             }
         }
-        SongSource::Sng(path) => {
-            let sng = SngFile::open(path)?;
-            let names: Vec<String> = sng.file_names().cloned().collect();
-            for name in names {
-                if is_stem_name(&name) {
-                    let bytes = sng.read(&name)?;
-                    out.push((name, bytes));
-                }
-            }
-        }
+        #[cfg(not(target_arch = "wasm32"))]
+        SongSource::Sng(path) => sng_stems(&SngFile::open(path)?, &mut out)?,
+        #[cfg(target_arch = "wasm32")]
+        SongSource::Sng(_) => return Err("filesystem songs aren't available in the browser".into()),
+        #[cfg(target_arch = "wasm32")]
+        SongSource::Bytes(bytes) => sng_stems(&SngFile::from_bytes(bytes.clone())?, &mut out)?,
     }
     Ok(out)
+}
+
+fn sng_stems(sng: &SngFile, out: &mut Vec<(String, Vec<u8>)>) -> Result<(), String> {
+    let names: Vec<String> = sng.file_names().cloned().collect();
+    for name in names {
+        if is_stem_name(&name) {
+            let bytes = sng.read(&name)?;
+            out.push((name, bytes));
+        }
+    }
+    Ok(())
 }
 
 /// Stem base names that carry the charted instrument, in preference order.
@@ -428,6 +470,8 @@ pub fn lead_stem_names(instrument: Instrument) -> &'static [&'static str] {
 /// Scan songs/ for playable songs: unpacked folders and raw .sng files.
 /// Returns the playable entries plus a human-readable reason for every
 /// song-shaped thing that couldn't be loaded, so failures aren't silent.
+/// (Native only — the browser demo's fixed library is built in web.rs.)
+#[cfg(not(target_arch = "wasm32"))]
 pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
     let mut entries = Vec::new();
     let mut errors = Vec::new();
@@ -459,6 +503,7 @@ pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
                     artist: chart.artist.clone(),
                     available,
                     source,
+                    locked: false,
                 });
             }
             Err(err) => errors.push(format!("{name}: {err}")),
@@ -475,12 +520,37 @@ pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
 
 /// The freely-licensed songs committed to the repo (see songs/README.md).
 /// They sort below user-added songs, so a growing library stays on top.
+#[cfg(not(target_arch = "wasm32"))]
 const BUNDLED: [&str; 3] =
     ["Code Monkey.sng", "Discipline.sng", "This Week I've Been Mostly Playing Guitar.sng"];
 
 #[cfg(test)]
 mod sng_tests {
     use super::*;
+
+    /// The browser demo's repacked song (scripts/pack_demo_song.py) must
+    /// stay loadable by the exact pipeline the demo uses: SNGPKG container,
+    /// notes.mid chart, and two vorbis stems with guitar as the lead.
+    #[test]
+    fn demo_pack_loads() {
+        let path = Path::new("web/songs/Code Monkey.sng");
+        if !path.exists() {
+            return;
+        }
+        let source = SongSource::Sng(path.to_path_buf());
+        let chart = load_song(&source).expect("demo .sng should parse");
+        assert_eq!(chart.title, "Code Monkey");
+        assert!(chart.instrument == Instrument::Guitar);
+        assert!(chart.diffs.iter().all(|d| d.len() >= 20));
+        let stems = stem_files(&source).expect("stems should read");
+        assert_eq!(stems.len(), 2, "premixed backing + guitar lead");
+        for (name, bytes) in &stems {
+            let buf = crate::decode::decode(bytes, name, 48000).expect("vorbis should decode");
+            let secs = buf.len() as f64 / 48000.0;
+            println!("{name}: {secs:.1}s");
+            assert!(secs > 180.0, "{name} should be a full-length stem");
+        }
+    }
 
     #[test]
     fn loads_sng_directly() {
@@ -530,3 +600,4 @@ mod library_tests {
         }
     }
 }
+

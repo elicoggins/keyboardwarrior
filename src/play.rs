@@ -726,7 +726,9 @@ impl Play {
         // SHIFT is the whammy bar: holding it keeps the lead bent down and
         // fattened, releasing returns it to normal. While pressed on a
         // sustain it also doubles the drip and trickles star power.
-        let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
+        // (No whammy bar in the browser demo — real app only.)
+        let shift = !cfg!(target_arch = "wasm32")
+            && (is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift));
         let mult = self.multiplier(jnow) as f32 * if shift { 2.0 } else { 1.0 };
         let mut holds = std::mem::take(&mut self.holds);
         let mut bonus = 0i64;

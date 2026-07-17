@@ -1,4 +1,4 @@
-// The audio engine: a cpal output stream with our own mixer.
+// The audio engine: an output stream with our own mixer.
 //
 // Why this exists: rhythm-game sync cannot be bolted onto a fire-and-forget
 // sound API. Here the game clock IS the audio hardware's frame counter — the
@@ -9,6 +9,11 @@
 // Everything is mixed in one place: song stems (backing + duckable lead) and
 // synthesized one-shots (drums, plucks, UI ticks) share the same callback.
 //
+// The mixer itself (`Mixer`) is backend-agnostic. Natively it runs inside a
+// cpal callback on the real-time audio thread; in the browser demo the same
+// mixer is pulled from JS by a ScriptProcessorNode (see web/kw_audio.js), so
+// both versions play byte-identical mixes.
+//
 // Real-time hygiene: the callback never frees big buffers — retired stems are
 // shipped back to the main thread over a channel and dropped there (reap()) —
 // and the voice list is pre-reserved so ordinary play doesn't allocate.
@@ -16,8 +21,10 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
+#[cfg(not(target_arch = "wasm32"))]
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 /// A decoded, device-rate, stereo sound. Cheap to clone.
@@ -82,6 +89,221 @@ struct ClockSmooth {
     init: bool,
 }
 
+/// The mixer state and per-buffer DSP, shared by every backend: commands
+/// arrive over a channel, `process` fills interleaved f32 frames and
+/// advances the global frame counter.
+struct Mixer {
+    channels: usize,
+    sample_rate: f64,
+    voices: Vec<Voice>,
+    timeline: Option<Timeline>,
+    cur_master: f32,
+    frames: Arc<AtomicU64>,
+    timeline_start: Arc<AtomicU64>,
+    master: Arc<AtomicU32>,
+    rx: Receiver<Cmd>,
+    garbage: Sender<Buf>,
+}
+
+impl Mixer {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        channels: usize,
+        sample_rate: u32,
+        frames: Arc<AtomicU64>,
+        timeline_start: Arc<AtomicU64>,
+        master: Arc<AtomicU32>,
+        rx: Receiver<Cmd>,
+        garbage: Sender<Buf>,
+    ) -> Mixer {
+        Mixer {
+            channels,
+            sample_rate: sample_rate as f64,
+            voices: Vec::with_capacity(64),
+            timeline: None,
+            cur_master: f32::from_bits(master.load(Ordering::Relaxed)),
+            frames,
+            timeline_start,
+            master,
+            rx,
+            garbage,
+        }
+    }
+
+    /// Mix one buffer of interleaved f32 frames. Every sample of `out` is
+    /// written (no accumulation), so the caller never needs to zero it.
+    fn process(&mut self, out: &mut [f32]) {
+        let channels = self.channels;
+        let sample_rate = self.sample_rate;
+        // Apply pending commands
+        while let Ok(cmd) = self.rx.try_recv() {
+            let now = self.frames.load(Ordering::Relaxed);
+            match cmd {
+                Cmd::Play { buf, vol } => {
+                    self.voices.push(Voice {
+                        buf,
+                        vol,
+                        pos: 0,
+                        start_frame: now,
+                        scheduled: false,
+                    });
+                }
+                Cmd::PlayAt { buf, vol, time } => {
+                    let start_frame = match &self.timeline {
+                        Some(t) => {
+                            let f = t.start_frame as f64 + time * sample_rate;
+                            f.max(now as f64) as u64
+                        }
+                        None => now,
+                    };
+                    self.voices.push(Voice { buf, vol, pos: 0, start_frame, scheduled: true });
+                }
+                Cmd::StartTimeline { start_frame, backing, lead } => {
+                    retire(&self.garbage, self.timeline.take());
+                    // Unplayed one-shots from the old timeline die with it
+                    self.voices.retain(|v| !v.scheduled || v.pos > 0);
+                    self.timeline = Some(Timeline {
+                        start_frame,
+                        backing,
+                        lead,
+                        lead_gain: 1.0,
+                        lead_target: 1.0,
+                        whammy: 0.0,
+                        whammy_target: 0.0,
+                        wh_phase: 0.0,
+                        wh_lfo: 0.0,
+                        paused: false,
+                    });
+                }
+                Cmd::SetLeadGain(g) => {
+                    if let Some(t) = self.timeline.as_mut() {
+                        t.lead_target = g;
+                    }
+                }
+                Cmd::SetWhammy(a) => {
+                    if let Some(t) = self.timeline.as_mut() {
+                        t.whammy_target = a.clamp(0.0, 1.0);
+                    }
+                }
+                Cmd::SetPaused(p) => {
+                    if let Some(t) = self.timeline.as_mut() {
+                        t.paused = p;
+                    }
+                }
+                Cmd::StopTimeline => {
+                    retire(&self.garbage, self.timeline.take());
+                    self.voices.retain(|v| !v.scheduled || v.pos > 0);
+                }
+            }
+        }
+
+        let start = self.frames.load(Ordering::Relaxed);
+        let nframes = out.len() / channels;
+        // ~8 ms exponential gain smoothing for the lead stem
+        let gain_k = 1.0 - (-1.0 / (0.008 * sample_rate as f32)).exp();
+        // Whammy: while the bar is down a granular pitch-down voice
+        // (dual taps on a drifting delay, triangle-crossfaded) is
+        // layered with the dry stem — a fatter, doubled sound whose
+        // bend depth rides a pump LFO, like a player bobbing the bar,
+        // so the pitch dives and recovers GH-style. Bar travel is
+        // eased over ~80 ms so press and release both glide.
+        let whammy_k = 1.0 - (-1.0 / (0.08 * sample_rate as f32)).exp();
+        let wh_win = 0.06 * sample_rate as f32; // grain window, samples
+        const WH_BEND: f32 = 0.09; // ~1.6 semitones down at full dive
+        let master_target = f32::from_bits(self.master.load(Ordering::Relaxed));
+        let paused = self.timeline.as_ref().is_some_and(|t| t.paused);
+
+        for i in 0..nframes {
+            let gf = start + i as u64;
+            let mut l = 0.0f32;
+            let mut r = 0.0f32;
+
+            if let Some(t) = self.timeline.as_mut() {
+                if !t.paused && gf >= t.start_frame {
+                    let idx = (gf - t.start_frame) as usize;
+                    // Whammy: ease the bar, pump the LFO, and advance
+                    // the grain phase by the momentary dive depth —
+                    // the pitch wobbles down and back while held
+                    t.whammy += (t.whammy_target - t.whammy) * whammy_k;
+                    let wh = t.whammy;
+                    let bend = wh > 0.001;
+                    if bend {
+                        t.wh_lfo = (t.wh_lfo + WH_PUMP_HZ / sample_rate).fract();
+                        let pump = 0.5 - 0.5 * (std::f64::consts::TAU * t.wh_lfo).cos() as f32;
+                        let depth = wh * (0.30 + 0.70 * pump);
+                        t.wh_phase = (t.wh_phase + (depth * WH_BEND / wh_win) as f64).fract();
+                    } else {
+                        // Each fresh press starts the pump from the top
+                        t.wh_lfo = 0.0;
+                    }
+                    if let Some(b) = &t.backing {
+                        // No separate lead stem: whammy the whole mix
+                        let s = if bend && t.lead.is_none() {
+                            whammy_mix(b, idx, wh, t.wh_phase, wh_win)
+                        } else {
+                            b.get(idx).copied().unwrap_or([0.0; 2])
+                        };
+                        l += s[0];
+                        r += s[1];
+                    }
+                    t.lead_gain += (t.lead_target - t.lead_gain) * gain_k;
+                    if let Some(ld) = &t.lead {
+                        let s = if bend {
+                            whammy_mix(ld, idx, wh, t.wh_phase, wh_win)
+                        } else {
+                            ld.get(idx).copied().unwrap_or([0.0; 2])
+                        };
+                        l += s[0] * t.lead_gain;
+                        r += s[1] * t.lead_gain;
+                    }
+                }
+            }
+
+            for v in self.voices.iter_mut() {
+                if gf >= v.start_frame && !(paused && v.scheduled) {
+                    if let Some(s) = v.buf.get(v.pos) {
+                        l += s[0] * v.vol;
+                        r += s[1] * v.vol;
+                        v.pos += 1;
+                    }
+                }
+            }
+
+            // Master volume, smoothed like the lead gain
+            self.cur_master += (master_target - self.cur_master) * gain_k;
+            let (l, r) = (l * self.cur_master, r * self.cur_master);
+
+            // Soft-clip to keep stem sums from cracking
+            let (l, r) = (soft_clip(l), soft_clip(r));
+            out[i * channels] = l;
+            if channels > 1 {
+                out[i * channels + 1] = r;
+            }
+            for c in 2..channels {
+                out[i * channels + c] = 0.0;
+            }
+        }
+
+        // While paused the timeline start slides forward with the
+        // device clock, so its position (and every not-yet-started
+        // one-shot scheduled on it) holds still.
+        if paused {
+            if let Some(t) = self.timeline.as_mut() {
+                t.start_frame += nframes as u64;
+                self.timeline_start.store(t.start_frame, Ordering::Relaxed);
+            }
+            for v in self.voices.iter_mut() {
+                if v.scheduled && v.pos == 0 {
+                    v.start_frame += nframes as u64;
+                }
+            }
+        }
+
+        self.voices.retain(|v| v.pos < v.buf.len());
+        self.frames.store(start + nframes as u64, Ordering::Relaxed);
+    }
+}
+
 pub struct AudioEngine {
     pub sample_rate: u32,
     frames: Arc<AtomicU64>, // total frames submitted to the device
@@ -92,13 +314,18 @@ pub struct AudioEngine {
     // Master volume 0..1 as f32 bits, applied to the whole mix in the
     // callback (smoothed there, so steps never zipper)
     master: Arc<AtomicU32>,
+    #[cfg(not(target_arch = "wasm32"))]
     epoch: Instant,
+    #[cfg(target_arch = "wasm32")]
+    epoch: f64, // seconds, miniquad date clock
     smooth: Mutex<ClockSmooth>,
     garbage_rx: Receiver<Buf>, // buffers retired by the callback, dropped here
+    #[cfg(not(target_arch = "wasm32"))]
     _stream: cpal::Stream,
 }
 
 impl AudioEngine {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new() -> AudioEngine {
         let host = cpal::default_host();
         let device = host.default_output_device().expect("no audio output device");
@@ -147,6 +374,50 @@ impl AudioEngine {
             smooth: Mutex::new(ClockSmooth { offset: 0.0, init: false }),
             garbage_rx,
             _stream: stream,
+        }
+    }
+
+    /// Browser demo: the same mixer, pulled from JS by a ScriptProcessorNode.
+    /// `kw_audio_start` (web/kw_audio.js) creates the AudioContext and node,
+    /// and the node's callback calls back into `kw_render` for every buffer.
+    #[cfg(target_arch = "wasm32")]
+    pub fn new() -> AudioEngine {
+        let sample_rate = unsafe { web::kw_audio_start() };
+        let frames = Arc::new(AtomicU64::new(0));
+        let timeline_start = Arc::new(AtomicU64::new(u64::MAX));
+        let master = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let (tx, rx) = channel::<Cmd>();
+        let (garbage_tx, garbage_rx) = channel::<Buf>();
+        web::install(Mixer::new(
+            2,
+            sample_rate,
+            frames.clone(),
+            timeline_start.clone(),
+            master.clone(),
+            rx,
+            garbage_tx,
+        ));
+        AudioEngine {
+            sample_rate,
+            frames,
+            tx,
+            timeline_start,
+            master,
+            epoch: macroquad::miniquad::date::now(),
+            smooth: Mutex::new(ClockSmooth { offset: 0.0, init: false }),
+            garbage_rx,
+        }
+    }
+
+    /// Seconds of wall clock since the engine was created.
+    fn wall_elapsed(&self) -> f64 {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.epoch.elapsed().as_secs_f64()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            macroquad::miniquad::date::now() - self.epoch
         }
     }
 
@@ -225,7 +496,7 @@ impl AudioEngine {
         }
         let frames = self.frames.load(Ordering::Relaxed);
         let raw = (frames as f64 - start as f64) / self.sample_rate as f64;
-        let wall = self.epoch.elapsed().as_secs_f64();
+        let wall = self.wall_elapsed();
         let mut s = self.smooth.lock().unwrap();
         let target = raw - wall;
         if !s.init || (target - s.offset).abs() > 0.06 {
@@ -249,6 +520,7 @@ fn retire(garbage: &Sender<Buf>, timeline: Option<Timeline>) {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(clippy::too_many_arguments)]
 fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     device: &cpal::Device,
@@ -260,188 +532,72 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     rx: Receiver<Cmd>,
     garbage: Sender<Buf>,
 ) -> cpal::Stream {
-    let mut voices: Vec<Voice> = Vec::with_capacity(64);
-    let mut timeline: Option<Timeline> = None;
-    let mut cur_master = f32::from_bits(master.load(Ordering::Relaxed));
-    let sample_rate = config.sample_rate.0 as f64;
-
+    let mut mixer = Mixer::new(
+        channels,
+        config.sample_rate.0,
+        frames,
+        timeline_start,
+        master,
+        rx,
+        garbage,
+    );
+    let mut scratch: Vec<f32> = Vec::new();
     device
         .build_output_stream(
             config,
             move |out: &mut [T], _| {
-                // Apply pending commands
-                while let Ok(cmd) = rx.try_recv() {
-                    let now = frames.load(Ordering::Relaxed);
-                    match cmd {
-                        Cmd::Play { buf, vol } => {
-                            voices.push(Voice {
-                                buf,
-                                vol,
-                                pos: 0,
-                                start_frame: now,
-                                scheduled: false,
-                            });
-                        }
-                        Cmd::PlayAt { buf, vol, time } => {
-                            let start_frame = match &timeline {
-                                Some(t) => {
-                                    let f = t.start_frame as f64 + time * sample_rate;
-                                    f.max(now as f64) as u64
-                                }
-                                None => now,
-                            };
-                            voices.push(Voice { buf, vol, pos: 0, start_frame, scheduled: true });
-                        }
-                        Cmd::StartTimeline { start_frame, backing, lead } => {
-                            retire(&garbage, timeline.take());
-                            // Unplayed one-shots from the old timeline die with it
-                            voices.retain(|v| !v.scheduled || v.pos > 0);
-                            timeline = Some(Timeline {
-                                start_frame,
-                                backing,
-                                lead,
-                                lead_gain: 1.0,
-                                lead_target: 1.0,
-                                whammy: 0.0,
-                                whammy_target: 0.0,
-                                wh_phase: 0.0,
-                                wh_lfo: 0.0,
-                                paused: false,
-                            });
-                        }
-                        Cmd::SetLeadGain(g) => {
-                            if let Some(t) = timeline.as_mut() {
-                                t.lead_target = g;
-                            }
-                        }
-                        Cmd::SetWhammy(a) => {
-                            if let Some(t) = timeline.as_mut() {
-                                t.whammy_target = a.clamp(0.0, 1.0);
-                            }
-                        }
-                        Cmd::SetPaused(p) => {
-                            if let Some(t) = timeline.as_mut() {
-                                t.paused = p;
-                            }
-                        }
-                        Cmd::StopTimeline => {
-                            retire(&garbage, timeline.take());
-                            voices.retain(|v| !v.scheduled || v.pos > 0);
-                        }
-                    }
+                scratch.resize(out.len(), 0.0);
+                mixer.process(&mut scratch);
+                for (o, s) in out.iter_mut().zip(scratch.iter()) {
+                    *o = T::from_sample(*s);
                 }
-
-                let start = frames.load(Ordering::Relaxed);
-                let nframes = out.len() / channels;
-                // ~8 ms exponential gain smoothing for the lead stem
-                let gain_k = 1.0 - (-1.0 / (0.008 * sample_rate as f32)).exp();
-                // Whammy: while the bar is down a granular pitch-down voice
-                // (dual taps on a drifting delay, triangle-crossfaded) is
-                // layered with the dry stem — a fatter, doubled sound whose
-                // bend depth rides a pump LFO, like a player bobbing the bar,
-                // so the pitch dives and recovers GH-style. Bar travel is
-                // eased over ~80 ms so press and release both glide.
-                let whammy_k = 1.0 - (-1.0 / (0.08 * sample_rate as f32)).exp();
-                let wh_win = 0.06 * sample_rate as f32; // grain window, samples
-                const WH_BEND: f32 = 0.09; // ~1.6 semitones down at full dive
-                let master_target = f32::from_bits(master.load(Ordering::Relaxed));
-                let paused = timeline.as_ref().is_some_and(|t| t.paused);
-
-                for i in 0..nframes {
-                    let gf = start + i as u64;
-                    let mut l = 0.0f32;
-                    let mut r = 0.0f32;
-
-                    if let Some(t) = timeline.as_mut() {
-                        if !t.paused && gf >= t.start_frame {
-                            let idx = (gf - t.start_frame) as usize;
-                            // Whammy: ease the bar, pump the LFO, and advance
-                            // the grain phase by the momentary dive depth —
-                            // the pitch wobbles down and back while held
-                            t.whammy += (t.whammy_target - t.whammy) * whammy_k;
-                            let wh = t.whammy;
-                            let bend = wh > 0.001;
-                            if bend {
-                                t.wh_lfo = (t.wh_lfo + WH_PUMP_HZ / sample_rate).fract();
-                                let pump =
-                                    0.5 - 0.5 * (std::f64::consts::TAU * t.wh_lfo).cos() as f32;
-                                let depth = wh * (0.30 + 0.70 * pump);
-                                t.wh_phase =
-                                    (t.wh_phase + (depth * WH_BEND / wh_win) as f64).fract();
-                            } else {
-                                // Each fresh press starts the pump from the top
-                                t.wh_lfo = 0.0;
-                            }
-                            if let Some(b) = &t.backing {
-                                // No separate lead stem: whammy the whole mix
-                                let s = if bend && t.lead.is_none() {
-                                    whammy_mix(b, idx, wh, t.wh_phase, wh_win)
-                                } else {
-                                    b.get(idx).copied().unwrap_or([0.0; 2])
-                                };
-                                l += s[0];
-                                r += s[1];
-                            }
-                            t.lead_gain += (t.lead_target - t.lead_gain) * gain_k;
-                            if let Some(ld) = &t.lead {
-                                let s = if bend {
-                                    whammy_mix(ld, idx, wh, t.wh_phase, wh_win)
-                                } else {
-                                    ld.get(idx).copied().unwrap_or([0.0; 2])
-                                };
-                                l += s[0] * t.lead_gain;
-                                r += s[1] * t.lead_gain;
-                            }
-                        }
-                    }
-
-                    for v in voices.iter_mut() {
-                        if gf >= v.start_frame && !(paused && v.scheduled) {
-                            if let Some(s) = v.buf.get(v.pos) {
-                                l += s[0] * v.vol;
-                                r += s[1] * v.vol;
-                                v.pos += 1;
-                            }
-                        }
-                    }
-
-                    // Master volume, smoothed like the lead gain
-                    cur_master += (master_target - cur_master) * gain_k;
-                    let (l, r) = (l * cur_master, r * cur_master);
-
-                    // Soft-clip to keep stem sums from cracking
-                    let (l, r) = (soft_clip(l), soft_clip(r));
-                    out[i * channels] = T::from_sample(l);
-                    if channels > 1 {
-                        out[i * channels + 1] = T::from_sample(r);
-                    }
-                    for c in 2..channels {
-                        out[i * channels + c] = T::from_sample(0.0f32);
-                    }
-                }
-
-                // While paused the timeline start slides forward with the
-                // device clock, so its position (and every not-yet-started
-                // one-shot scheduled on it) holds still.
-                if paused {
-                    if let Some(t) = timeline.as_mut() {
-                        t.start_frame += nframes as u64;
-                        timeline_start.store(t.start_frame, Ordering::Relaxed);
-                    }
-                    for v in voices.iter_mut() {
-                        if v.scheduled && v.pos == 0 {
-                            v.start_frame += nframes as u64;
-                        }
-                    }
-                }
-
-                voices.retain(|v| v.pos < v.buf.len());
-                frames.store(start + nframes as u64, Ordering::Relaxed);
             },
             |err| eprintln!("audio stream error: {err}"),
             None,
         )
         .expect("failed to build audio stream")
+}
+
+// ---------------------------------------------------------------- web backend
+
+/// Browser backend: the mixer lives in a thread-local and is pulled from JS.
+/// The page's ScriptProcessorNode runs on the same (only) thread as the game
+/// loop, so no synchronization beyond the existing channels is needed.
+#[cfg(target_arch = "wasm32")]
+mod web {
+    use super::Mixer;
+    use std::cell::RefCell;
+
+    extern "C" {
+        /// Provided by web/kw_audio.js: creates the AudioContext and the
+        /// ScriptProcessorNode that pulls `kw_render`, and returns the
+        /// context's sample rate.
+        pub fn kw_audio_start() -> u32;
+    }
+
+    thread_local! {
+        static MIXER: RefCell<Option<Mixer>> = const { RefCell::new(None) };
+        static SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub fn install(mixer: Mixer) {
+        MIXER.with(|m| *m.borrow_mut() = Some(mixer));
+    }
+
+    /// Called from JS for every audio buffer: mix `nframes` stereo frames
+    /// and return a pointer to the interleaved f32 samples in wasm memory.
+    #[no_mangle]
+    pub extern "C" fn kw_render(nframes: u32) -> *const f32 {
+        SCRATCH.with(|s| {
+            let mut s = s.borrow_mut();
+            s.resize(nframes as usize * 2, 0.0);
+            MIXER.with(|m| match m.borrow_mut().as_mut() {
+                Some(mixer) => mixer.process(&mut s),
+                None => s.fill(0.0),
+            });
+            s.as_ptr()
+        })
+    }
 }
 
 /// The whammied stem sample: the dry signal layered with a pitched-down

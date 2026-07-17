@@ -24,6 +24,23 @@ Drop a Clone Hero song into `songs/` and play. Both forms work as-is:
 
 The game reads the .sng container natively and decodes all stem formats.
 
+## Browser demo
+
+A one-song demo (Code Monkey) runs in the browser as a static site — same
+gameplay code, same mixer, no whammy bar:
+
+```sh
+python3 scripts/pack_demo_song.py   # once: repack the demo song with vorbis stems
+scripts/build_web.sh serve          # build web/dist and serve on :8000
+```
+
+`web/dist` is self-contained; copy it anywhere static (e.g. GitHub Pages).
+How it works: macroquad targets wasm out of the box; the cpal callback's
+mixer is shared code, pulled from JS by a ScriptProcessorNode so the audio
+clock semantics survive; the song is fetched over HTTP and decoded in-page
+(libopus doesn't build for wasm, hence the vorbis repack, pre-mixed with the
+game's own mix/normalize math).
+
 ## Tech
 
 - **Rust + [macroquad](https://macroquad.rs)** for rendering/input
