@@ -1,9 +1,6 @@
 # Build artifacts
 /target
 
-# Song library: most charts index copyrighted recordings — those must never
-# be committed, so everything in songs/ is ignored except the freely-licensed
-# bundled songs listed below (licenses in songs/README.md).
 /songs/*
 !/songs/README.md
 !/songs/Code Monkey.sng
