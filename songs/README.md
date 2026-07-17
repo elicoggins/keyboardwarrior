@@ -1,9 +1,5 @@
 # Bundled songs
 
-Everything you drop into this folder stays on your machine — the repo ignores
-it. The songs below are committed because their recordings are freely
-licensed for redistribution. None of them may be used commercially where the
-license says so; attribution is preserved here.
 
 | Song | Artist | License | Source |
 | --- | --- | --- | --- |
