@@ -13,17 +13,16 @@ cargo run --release
 A few freely-licensed songs are bundled to play out of the box (see
 [songs/README.md](songs/README.md) for licenses).
 
-Drop a Clone Hero song into `songs/` (or one of your extra folders — see below)
+Drop a Clone Hero song into `songs/` (or point at an existing folder — see below)
 and play. Both forms work as-is:
 
-- **A `.sng` file** (exactly what [Chorus Encore](https://www.enchor.us) hands
-  you — no unpacking, no rebuild)
+- **A `.sng` file**
 - **A song folder** (`notes.mid`/`notes.chart`, `song.ini`, audio stems as
   `.opus`/`.ogg`/`.mp3`/`.wav`)
 
 The game reads the .sng container natively and decodes all stem formats.
 
-### Extra song folders
+### Multiple song directories
 
 If you already have a Clone Hero directory, you can point Keyboard Warrior at it.
 

@@ -248,6 +248,55 @@ fn median(xs: &[f64]) -> f64 {
     }
 }
 
+/// Hold time before a held navigation key starts repeating on its own
+const REPEAT_DELAY: f32 = 0.32;
+/// Gap before the first auto-repeat tick
+const REPEAT_SLOW: f32 = 0.13;
+/// Floor the gap accelerates down to
+const REPEAT_FAST: f32 = 0.08;
+/// Each tick waits this fraction of the previous gap
+const REPEAT_ACCEL: f32 = 0.82;
+
+/// Auto-repeat for held navigation keys. A tap fires once; holding the key
+/// past `REPEAT_DELAY` starts it ticking, and each tick lands a little sooner
+/// than the last until it tops out at `REPEAT_FAST`.
+struct KeyRepeat {
+    /// The key currently owning the repeat — the last one pressed, so
+    /// tapping the opposite direction mid-hold takes over immediately
+    key: Option<KeyCode>,
+    /// Seconds until the next tick
+    timer: f32,
+    /// Gap the next tick will use
+    interval: f32,
+}
+
+impl KeyRepeat {
+    fn new() -> Self {
+        Self { key: None, timer: 0.0, interval: REPEAT_SLOW }
+    }
+
+    /// Advances the repeat clock one frame and returns the key that should
+    /// act this frame, if any. Call once per frame with the keys that share
+    /// the repeat (e.g. Up and Down of one list).
+    fn poll(&mut self, keys: &[KeyCode], dt: f32) -> Option<KeyCode> {
+        // A fresh press always wins and restarts the ramp from the top
+        if let Some(&k) = keys.iter().find(|&&k| is_key_pressed(k)) {
+            self.key = Some(k);
+            self.timer = REPEAT_DELAY;
+            self.interval = REPEAT_SLOW;
+            return Some(k);
+        }
+        let held = self.key.filter(|&k| keys.contains(&k) && is_key_down(k))?;
+        self.timer -= dt;
+        if self.timer > 0.0 {
+            return None;
+        }
+        self.timer = self.interval;
+        self.interval = (self.interval * REPEAT_ACCEL).max(REPEAT_FAST);
+        Some(held)
+    }
+}
+
 /// Procedural app icon in the EMBER theme: dark rounded square, pale strike
 /// line, and an amber-ringed gem sitting on it — the game in one glyph.
 fn icon_pixels<const N: usize>(size: usize) -> [u8; N] {
@@ -368,6 +417,8 @@ async fn main() {
         std::collections::VecDeque::with_capacity(FRAME_LOG_LEN);
     // Seconds left on the master-volume overlay after a -/+ press
     let mut vol_flash = 0.0f32;
+    // Held Up/Down repeats when scrolling any of the vertical lists
+    let mut nav_repeat = KeyRepeat::new();
 
     loop {
         // Deferred decode jobs (wasm has no loader threads) run here, after
@@ -425,7 +476,8 @@ async fn main() {
                     songs[*sel].available.iter().map(|&d| (d, DIFF_NAMES[d].to_string())).collect();
                 *diff_sel = (*diff_sel).min(diff_opts.len() - 1);
 
-                if is_key_pressed(KeyCode::Up) {
+                let nav = nav_repeat.poll(&[KeyCode::Up, KeyCode::Down], get_frame_time());
+                if nav == Some(KeyCode::Up) {
                     *sel = (*sel + rows - 1) % rows;
                     // Locked signpost rows are never selectable
                     while songs[*sel].locked {
@@ -434,7 +486,7 @@ async fn main() {
                     *diff_sel = 0;
                     engine.play(&sounds.hat, 0.4);
                 }
-                if is_key_pressed(KeyCode::Down) {
+                if nav == Some(KeyCode::Down) {
                     *sel = (*sel + 1) % rows;
                     while songs[*sel].locked {
                         *sel = (*sel + 1) % rows;
@@ -444,9 +496,7 @@ async fn main() {
                 }
                 // Moving off a row cancels a pending deletion on it.
                 #[cfg(not(target_arch = "wasm32"))]
-                if (is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::Down))
-                    && pending_delete.is_some_and(|d| d != *sel)
-                {
+                if nav.is_some() && pending_delete.is_some_and(|d| d != *sel) {
                     pending_delete = None;
                 }
                 if is_key_pressed(KeyCode::Left) && *diff_sel > 0 {
@@ -777,11 +827,12 @@ async fn main() {
                     next_frame().await;
                     continue;
                 }
-                if is_key_pressed(KeyCode::Up) {
+                let nav = nav_repeat.poll(&[KeyCode::Up, KeyCode::Down], get_frame_time());
+                if nav == Some(KeyCode::Up) {
                     *sel = (*sel + rows.len() - 1) % rows.len();
                     engine.play(&sounds.hat, 0.4);
                 }
-                if is_key_pressed(KeyCode::Down) {
+                if nav == Some(KeyCode::Down) {
                     *sel = (*sel + 1) % rows.len();
                     engine.play(&sounds.hat, 0.4);
                 }
@@ -1327,7 +1378,9 @@ async fn main() {
                             if dir != 0 {
                                 cycle_diff(cs, dir);
                             }
-                            if is_key_pressed(KeyCode::Up) {
+                            let nav =
+                                nav_repeat.poll(&[KeyCode::Up, KeyCode::Down], get_frame_time());
+                            if nav == Some(KeyCode::Up) {
                                 if cs.sel == 0 {
                                     cs.focus = ChorusFocus::Search; // back to the box
                                 } else {
@@ -1335,7 +1388,7 @@ async fn main() {
                                 }
                                 engine.play(&sounds.hat, 0.4);
                             }
-                            if is_key_pressed(KeyCode::Down) && cs.sel + 1 < cs.hits.len() {
+                            if nav == Some(KeyCode::Down) && cs.sel + 1 < cs.hits.len() {
                                 cs.sel += 1;
                                 engine.play(&sounds.hat, 0.4);
                             }
