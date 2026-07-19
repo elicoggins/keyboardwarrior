@@ -9,3 +9,8 @@
 
 The note charts are community work by the charters credited above; the game
 only reads them, it doesn't modify or re-distribute them beyond this folder.
+
+These are the defaults — they always stay in the library. To add your own
+songs, drop them here or use the in-game **G / A / F / R** keys (see the main
+[README](../README.md#adding-songs--zero-conversion)); your songs sort above
+these bundled ones.

@@ -10,11 +10,18 @@ symphonia = { version = "0.5", default-features = false, features = ["mp3", "ogg
 
 # Native-only: cpal drives the mixer (the browser demo pulls it from JS
 # instead), and libopus is a C library that doesn't build for wasm — the
-# demo song ships vorbis stems.
+# demo song ships vorbis stems. The song-import extras (folder picker,
+# config file, Chorus Encore search/download) are native-only too — the
+# browser demo has no filesystem and ships a fixed library.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cpal = "0.15"
 ogg = "0.9"
 opus = "0.3"
+dirs = "5"
+rfd = "0.14"
+ureq = { version = "2", features = ["json", "tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [profile.dev]
 opt-level = 1

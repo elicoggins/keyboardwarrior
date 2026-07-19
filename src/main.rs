@@ -11,6 +11,10 @@ use macroquad::prelude::*;
 
 mod audio;
 mod chart;
+#[cfg(not(target_arch = "wasm32"))]
+mod chorus;
+#[cfg(not(target_arch = "wasm32"))]
+mod config;
 mod decode;
 mod gfx;
 mod play;
@@ -69,12 +73,56 @@ struct Calibrate {
 }
 
 enum Scene {
-    Menu { sel: usize, diff_sel: usize, scroll: f32 },
-    Settings { sel: usize, menu_sel: usize },
-    Loading { rx: Receiver<LoadMsg>, song: usize, diff: usize, title: String },
+    Menu {
+        sel: usize,
+        diff_sel: usize,
+        scroll: f32,
+    },
+    Settings {
+        sel: usize,
+        menu_sel: usize,
+    },
+    Loading {
+        rx: Receiver<LoadMsg>,
+        song: usize,
+        diff: usize,
+        title: String,
+    },
     Playing(Box<Play>),
     Results(Results),
     Calibrate(Calibrate),
+    // In-app Chorus Encore browser: type a query, download a chart into songs/.
+    #[cfg(not(target_arch = "wasm32"))]
+    Chorus(Box<ChorusScene>),
+}
+
+/// Whether keystrokes edit the query or navigate the results list.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(PartialEq, Clone, Copy)]
+enum ChorusFocus {
+    Search,  // typing edits the query; Enter runs a search
+    Results, // up/down move the selection; Enter downloads
+}
+
+/// State for the Chorus search screen. Network calls run on worker threads and
+/// report back over `net`, so the render loop never blocks.
+#[cfg(not(target_arch = "wasm32"))]
+struct ChorusScene {
+    query: String,                    // the text being typed
+    focus: ChorusFocus,               // query bar vs results list
+    diff_idx: usize,                  // index into chorus::DIFF_FILTERS
+    hits: Vec<chorus::Hit>,           // results of the last search
+    sel: usize,                       // highlighted result
+    menu_sel: usize,                  // menu row to restore on Escape
+    net: Option<Receiver<ChorusMsg>>, // in-flight search/download, if any
+    busy: &'static str,               // "" idle, else "searching…" / "downloading…"
+    note: Option<String>,             // last error/status shown on the screen
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+enum ChorusMsg {
+    Results(Result<Vec<chorus::Hit>, String>),
+    Downloaded(Result<String, String>), // Ok(title) once saved into songs/
 }
 
 type StemCache = Option<(SongSource, Buf, Option<Buf>)>;
@@ -103,6 +151,22 @@ fn spawn_loader(source: SongSource, rate: u32, cached: StemCache) -> Receiver<Lo
         let _ = tx.send(msg);
     });
     rx
+}
+
+/// Reveal a folder in the OS file manager (Finder / Explorer / the default
+/// file browser) so the player can drag a downloaded .sng straight in.
+#[cfg(not(target_arch = "wasm32"))]
+fn open_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
+    // Make sure the target exists so the file manager doesn't error out.
+    let _ = std::fs::create_dir_all(path);
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program).arg(path).spawn().map(|_| ())
 }
 
 /// No threads on wasm: the decode is deferred a couple of frames (so the
@@ -264,13 +328,27 @@ async fn main() {
     prewarm_glyphs();
     let engine = AudioEngine::new();
     let sounds = make_sounds(engine.sample_rate);
+    // The bundled songs/ dir is always scanned first; the player's extra
+    // folders (from the config file / KW_SONG_DIRS) are added on top.
     #[cfg(not(target_arch = "wasm32"))]
-    let (songs, scan_errors) = chart::scan_songs(std::path::Path::new("songs"));
+    let mut config = config::Config::load();
+    #[cfg(not(target_arch = "wasm32"))]
+    let song_roots = |cfg: &config::Config| -> Vec<std::path::PathBuf> {
+        let mut roots = vec![std::path::PathBuf::from("songs")];
+        roots.extend(cfg.song_dirs.iter().cloned());
+        roots
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let (mut songs, mut scan_errors) = chart::scan_all(&song_roots(&config));
     #[cfg(target_arch = "wasm32")]
     let (songs, scan_errors) = web::load_demo_library().await;
     let mut stem_cache: StemCache = None;
     // The most recent load failure, shown in the menu until the next attempt
     let mut status_error: Option<String> = None;
+    // Song index armed for deletion: Delete once arms the selected row, Delete
+    // again on the same row removes it. Any navigation disarms.
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut pending_delete: Option<usize> = None;
     let mut scene = Scene::Menu { sel: 0, diff_sel: 0, scroll: 0.0 };
 
     // Debug hook: KW_AUTOSTART=<song>:<diff> jumps straight into a song
@@ -322,9 +400,9 @@ async fn main() {
                     draw_centered("KEYBOARD WARRIOR", 130.0, 72.0, Color::new(1.0, 1.0, 1.0, 0.95));
                     draw_centered(
                         if cfg!(target_arch = "wasm32") {
-                            "demo song unavailable — refresh the page to retry"
+                            "demo song unavailable - refresh the page to retry"
                         } else {
-                            "no songs found — drop a Clone Hero .sng or song folder into songs/"
+                            "no songs found - drop a Clone Hero .sng or song folder into songs/"
                         },
                         screen_height() * 0.5,
                         22.0,
@@ -363,6 +441,13 @@ async fn main() {
                     }
                     *diff_sel = 0;
                     engine.play(&sounds.hat, 0.4);
+                }
+                // Moving off a row cancels a pending deletion on it.
+                #[cfg(not(target_arch = "wasm32"))]
+                if (is_key_pressed(KeyCode::Up) || is_key_pressed(KeyCode::Down))
+                    && pending_delete.is_some_and(|d| d != *sel)
+                {
+                    pending_delete = None;
                 }
                 if is_key_pressed(KeyCode::Left) && *diff_sel > 0 {
                     *diff_sel -= 1;
@@ -405,6 +490,95 @@ async fn main() {
                 if is_key_pressed(KeyCode::O) {
                     engine.play(&sounds.kick, 0.4);
                     scene = Scene::Settings { sel: 0, menu_sel: *sel };
+                    next_frame().await;
+                    continue;
+                }
+                // Song-library management (native only — the browser demo has a
+                // fixed library and no filesystem).
+                #[cfg(not(target_arch = "wasm32"))]
+                if is_key_pressed(KeyCode::A) {
+                    engine.play(&sounds.kick, 0.4);
+                    // The picker is modal and blocks the render loop; that's
+                    // fine — the player is deliberately paused on a dialog.
+                    if let Some(dir) =
+                        rfd::FileDialog::new().set_title("Add a song folder").pick_folder()
+                    {
+                        let shown = dir.display().to_string();
+                        if config.add_song_dir(dir) {
+                            let (s, e) = chart::scan_all(&song_roots(&config));
+                            songs = s;
+                            scan_errors = e;
+                            *sel = 0;
+                            *scroll = 0.0;
+                            status_error =
+                                Some(format!("added {shown} - {} songs total", songs.len()));
+                        } else {
+                            status_error = Some(format!("{shown} is already in your library"));
+                        }
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if is_key_pressed(KeyCode::F) {
+                    engine.play(&sounds.kick, 0.4);
+                    if let Err(e) = open_in_file_manager(std::path::Path::new("songs")) {
+                        status_error = Some(format!("couldn't open songs folder: {e}"));
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if is_key_pressed(KeyCode::R) {
+                    engine.play(&sounds.kick, 0.4);
+                    let (s, e) = chart::scan_all(&song_roots(&config));
+                    songs = s;
+                    scan_errors = e;
+                    *sel = (*sel).min(songs.len().saturating_sub(1));
+                    pending_delete = None;
+                    status_error = Some(format!("rescanned - {} songs", songs.len()));
+                }
+                // Delete: two presses on the same row remove the song from disk.
+                #[cfg(not(target_arch = "wasm32"))]
+                if is_key_pressed(KeyCode::Delete) || is_key_pressed(KeyCode::Backspace) {
+                    let row = *sel;
+                    if chart::is_bundled(&songs[row].source) {
+                        status_error = Some("bundled default songs can't be deleted".into());
+                        pending_delete = None;
+                    } else if pending_delete == Some(row) {
+                        // Confirmed — remove it, then rescan and fix selection.
+                        let title = songs[row].title.clone();
+                        match chart::delete_song(&songs[row].source) {
+                            Ok(()) => {
+                                let (s, e) = chart::scan_all(&song_roots(&config));
+                                songs = s;
+                                scan_errors = e;
+                                *sel = row.min(songs.len().saturating_sub(1));
+                                status_error = Some(format!("deleted {title}"));
+                                engine.play(&sounds.kick, 0.5);
+                            }
+                            Err(e) => status_error = Some(format!("couldn't delete {title}: {e}")),
+                        }
+                        pending_delete = None;
+                    } else {
+                        // Arm it: the row now shows a confirm prompt.
+                        pending_delete = Some(row);
+                        engine.play(&sounds.hat, 0.4);
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if is_key_pressed(KeyCode::G) {
+                    engine.play(&sounds.kick, 0.4);
+                    scene = Scene::Chorus(Box::new(ChorusScene {
+                        query: String::new(),
+                        focus: ChorusFocus::Search,
+                        diff_idx: 0,
+                        hits: Vec::new(),
+                        sel: 0,
+                        menu_sel: *sel,
+                        net: None,
+                        busy: "",
+                        note: None,
+                    }));
+                    // Swallow the 'g' that opened this screen so it doesn't land
+                    // in the search box on the next frame.
+                    while get_char_pressed().is_some() {}
                     next_frame().await;
                     continue;
                 }
@@ -533,6 +707,17 @@ async fn main() {
                             20.0,
                             wa(th().accent, 0.85 * fa),
                         );
+                        // Delete confirmation, in place of nothing else — a
+                        // second Delete on this row removes it.
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if pending_delete == Some(row) {
+                            draw_centered(
+                                "press DELETE again to remove this song  ·  any move cancels",
+                                y + 76.0,
+                                17.0,
+                                wa(th().miss, 0.9 * fa),
+                            );
+                        }
                     }
                 }
 
@@ -556,7 +741,7 @@ async fn main() {
                 let speed = SPEEDS[SPEED_IDX.load(Ordering::Relaxed) % SPEEDS.len()].0;
                 draw_fit(
                     &format!(
-                        "M — text: {}   ·   T — theme: {}   ·   S — sustains: {}   ·   V — speed: {}   ·   C — calibrate ({off_ms:+} ms)   ·   -/+ — volume: {:.0}%",
+                        "M · text: {}   ·   T · theme: {}   ·   S · sustains: {}   ·   V · speed: {}   ·   C · calibrate ({off_ms:+} ms)   ·   -/+ · volume: {:.0}%",
                         mode_name,
                         th().name,
                         sus,
@@ -570,7 +755,13 @@ async fn main() {
                     wa(th().secondary, 0.7),
                 );
                 draw_centered(
-                    "up/down: song   ·   left/right: difficulty   ·   enter: play   ·   O: all settings",
+                    // The library keys (add/open/rescan/get) are native only —
+                    // the browser demo ships a fixed library.
+                    if cfg!(target_arch = "wasm32") {
+                        "up/down: song   ·   left/right: difficulty   ·   enter: play   ·   O: all settings"
+                    } else {
+                        "up/down: song · left/right: difficulty · enter: play · O: settings · A: add folder · F: open songs · R: rescan · G: get songs · del: remove"
+                    },
                     hint_y + 84.0,
                     18.0,
                     Color::new(1.0, 1.0, 1.0, 0.3),
@@ -992,6 +1183,269 @@ async fn main() {
                     20.0,
                     Color::new(1.0, 1.0, 1.0, 0.45),
                 );
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            Scene::Chorus(cs) => {
+                // Drain a completed network job, if one was in flight.
+                if let Some(rx) = &cs.net {
+                    match rx.try_recv() {
+                        Ok(ChorusMsg::Results(res)) => {
+                            cs.busy = "";
+                            cs.net = None;
+                            match res {
+                                Ok(hits) => {
+                                    cs.note = (hits.is_empty()).then(|| "no matches".to_string());
+                                    cs.hits = hits;
+                                    cs.sel = 0;
+                                }
+                                Err(e) => cs.note = Some(e),
+                            }
+                        }
+                        Ok(ChorusMsg::Downloaded(res)) => {
+                            cs.busy = "";
+                            cs.net = None;
+                            match res {
+                                Ok(title) => {
+                                    // Freshly downloaded — rescan so it's playable
+                                    // now, then drop back to the menu on it.
+                                    let (s, e) = chart::scan_all(&song_roots(&config));
+                                    songs = s;
+                                    scan_errors = e;
+                                    let at = songs
+                                        .iter()
+                                        .position(|x| x.title == title && !x.locked)
+                                        .unwrap_or(0);
+                                    status_error = Some(format!("added {title} to your library"));
+                                    scene = Scene::Menu { sel: at, diff_sel: 0, scroll: at as f32 };
+                                    next_frame().await;
+                                    continue;
+                                }
+                                Err(e) => cs.note = Some(e),
+                            }
+                        }
+                        Err(TryRecvError::Disconnected) => {
+                            cs.busy = "";
+                            cs.net = None;
+                            cs.note = Some("network thread died".into());
+                        }
+                        Err(TryRecvError::Empty) => {}
+                    }
+                }
+
+                let idle = cs.net.is_none();
+                if is_key_pressed(KeyCode::Escape) {
+                    let m = cs.menu_sel;
+                    scene = Scene::Menu { sel: m, diff_sel: 0, scroll: m as f32 };
+                    next_frame().await;
+                    continue;
+                }
+                // Input only while nothing is in flight.
+                if idle {
+                    // Kick off a search with the current query + difficulty
+                    // filter, on a worker thread. Defined as a closure so both
+                    // Enter and the D-filter key can trigger it.
+                    let start_search = |cs: &mut ChorusScene| {
+                        let q = cs.query.trim().to_string();
+                        if q.is_empty() {
+                            return;
+                        }
+                        let diff = chorus::DIFF_FILTERS[cs.diff_idx].1.map(str::to_string);
+                        cs.busy = "searching...";
+                        cs.note = None;
+                        cs.focus = ChorusFocus::Search;
+                        let (tx, rx) = channel();
+                        std::thread::spawn(move || {
+                            let _ =
+                                tx.send(ChorusMsg::Results(chorus::search(&q, 1, diff.as_deref())));
+                        });
+                        cs.net = Some(rx);
+                    };
+
+                    // Tab flips focus between the query bar and the results.
+                    if is_key_pressed(KeyCode::Tab) && !cs.hits.is_empty() {
+                        cs.focus = match cs.focus {
+                            ChorusFocus::Search => ChorusFocus::Results,
+                            ChorusFocus::Results => ChorusFocus::Search,
+                        };
+                        engine.play(&sounds.hat, 0.4);
+                    }
+                    // D cycles the difficulty filter and re-runs the search so
+                    // the change takes effect immediately.
+                    if is_key_pressed(KeyCode::D) {
+                        cs.diff_idx = (cs.diff_idx + 1) % chorus::DIFF_FILTERS.len();
+                        engine.play(&sounds.kick, 0.4);
+                        start_search(cs);
+                    }
+
+                    match cs.focus {
+                        ChorusFocus::Search => {
+                            // Only printable ASCII reaches the query — the font
+                            // atlas holds ' '..='~' only, so arrow keys and other
+                            // special keys (which come through get_char_pressed as
+                            // non-printable chars) would otherwise draw as tofu.
+                            while let Some(c) = get_char_pressed() {
+                                if (' '..='~').contains(&c) {
+                                    cs.query.push(c);
+                                }
+                            }
+                            if is_key_pressed(KeyCode::Backspace) {
+                                cs.query.pop();
+                            }
+                            if is_key_pressed(KeyCode::Enter) {
+                                start_search(cs);
+                            }
+                            // Down drops into the results list, if any.
+                            if is_key_pressed(KeyCode::Down) && !cs.hits.is_empty() {
+                                cs.focus = ChorusFocus::Results;
+                                cs.sel = 0;
+                                engine.play(&sounds.hat, 0.4);
+                            }
+                        }
+                        ChorusFocus::Results => {
+                            // Drain typed chars so they don't queue up for when
+                            // focus returns to the search box.
+                            while get_char_pressed().is_some() {}
+                            if is_key_pressed(KeyCode::Up) {
+                                if cs.sel == 0 {
+                                    cs.focus = ChorusFocus::Search; // back to the box
+                                } else {
+                                    cs.sel -= 1;
+                                }
+                                engine.play(&sounds.hat, 0.4);
+                            }
+                            if is_key_pressed(KeyCode::Down) && cs.sel + 1 < cs.hits.len() {
+                                cs.sel += 1;
+                                engine.play(&sounds.hat, 0.4);
+                            }
+                            if is_key_pressed(KeyCode::Enter) && cs.sel < cs.hits.len() {
+                                // Download the highlighted hit.
+                                let hit = &cs.hits[cs.sel];
+                                let owned = chorus::Hit {
+                                    name: hit.name.clone(),
+                                    artist: hit.artist.clone(),
+                                    charter: hit.charter.clone(),
+                                    md5: hit.md5.clone(),
+                                    diff_guitar: hit.diff_guitar,
+                                };
+                                let title = if owned.name.is_empty() {
+                                    "song".to_string()
+                                } else {
+                                    owned.name.clone()
+                                };
+                                cs.busy = "downloading...";
+                                cs.note = None;
+                                engine.play(&sounds.kick, 0.4);
+                                let (tx, rx) = channel();
+                                std::thread::spawn(move || {
+                                    let dest = std::path::Path::new("songs");
+                                    let res = chorus::download(&owned, dest).map(|_| title);
+                                    let _ = tx.send(ChorusMsg::Downloaded(res));
+                                });
+                                cs.net = Some(rx);
+                            }
+                        }
+                    }
+                }
+
+                // ---- draw ----
+                clear_background(th().bg);
+                draw_centered("GET SONGS", 96.0, 48.0, Color::new(1.0, 1.0, 1.0, 0.95));
+                draw_centered(
+                    "search Chorus Encore  ·  full chart (every charted difficulty) downloads into your songs folder",
+                    136.0,
+                    18.0,
+                    wa(th().secondary, 0.8),
+                );
+                // External-source disclaimer: these files come from a third party.
+                draw_centered(
+                    "charts are community uploads from enchor.us  ·  download at your own risk",
+                    160.0,
+                    15.0,
+                    Color::new(1.0, 0.8, 0.4, 0.55),
+                );
+                let cx = screen_width() / 2.0;
+
+                // Search box
+                let box_w = (screen_width() * 0.6).min(680.0);
+                let bx = cx - box_w / 2.0;
+                let by = 192.0;
+                let searching_focus = cs.focus == ChorusFocus::Search;
+                let box_edge = if searching_focus { 0.8 } else { 0.35 };
+                draw_rectangle(bx, by, box_w, 40.0, Color::new(1.0, 1.0, 1.0, 0.06));
+                draw_rectangle_lines(bx, by, box_w, 40.0, 2.0, wa(th().accent, box_edge));
+                let caret = if idle && searching_focus && (get_time() * 2.0) as i64 % 2 == 0 {
+                    "_"
+                } else {
+                    ""
+                };
+                let placeholder = cs.query.is_empty() && searching_focus;
+                let shown = if placeholder {
+                    "type a song or artist...".to_string()
+                } else {
+                    format!("{}{caret}", cs.query)
+                };
+                let q_color = if placeholder {
+                    Color::new(1.0, 1.0, 1.0, 0.3)
+                } else {
+                    Color::new(1.0, 1.0, 1.0, 0.9)
+                };
+                dtext(&shown, bx + 14.0, by + 27.0, 22.0, q_color);
+
+                // Difficulty filter, to the right of the box.
+                let (dname, _) = chorus::DIFF_FILTERS[cs.diff_idx];
+                dtext(
+                    &format!("[D] guitar difficulty: {dname}"),
+                    bx,
+                    by + 62.0,
+                    17.0,
+                    wa(th().secondary, 0.75),
+                );
+
+                // Busy / status line
+                if !cs.busy.is_empty() {
+                    draw_centered(cs.busy, by + 92.0, 20.0, wa(th().accent, 0.9));
+                } else if let Some(note) = &cs.note {
+                    draw_centered(note, by + 92.0, 18.0, wa(th().miss, 0.8));
+                }
+
+                // Results
+                let list_top = by + 128.0;
+                let row_h = 52.0;
+                for (i, hit) in cs.hits.iter().enumerate() {
+                    let y = list_top + i as f32 * row_h;
+                    if y > screen_height() - 90.0 {
+                        break;
+                    }
+                    let selected =
+                        i == cs.sel && cs.focus == ChorusFocus::Results && cs.net.is_none();
+                    if selected {
+                        draw_rectangle(bx, y - 22.0, box_w, row_h - 8.0, wa(th().accent, 0.10));
+                    }
+                    let name_a = if selected { 0.95 } else { 0.7 };
+                    dtext(&hit.name, bx + 14.0, y, 22.0, Color::new(1.0, 1.0, 1.0, name_a));
+                    let sub = if hit.charter.is_empty() {
+                        hit.artist.clone()
+                    } else {
+                        format!("{}   ·   charter: {}", hit.artist, hit.charter)
+                    };
+                    dtext(&sub, bx + 14.0, y + 22.0, 16.0, wa(th().secondary, 0.7));
+                    // Guitar tier the chart tops out at, right-aligned in the row.
+                    let tier = format!("guitar: {}", chorus::guitar_tier_name(hit.diff_guitar));
+                    let td = msize(&tier, 16.0);
+                    dtext(&tier, bx + box_w - td.width - 14.0, y, 16.0, wa(th().accent, 0.7));
+                }
+
+                let hint = if !cs.busy.is_empty() {
+                    "working...  ·  esc: back"
+                } else if cs.hits.is_empty() {
+                    "type a query  ·  enter: search  ·  D: difficulty  ·  esc: back"
+                } else if cs.focus == ChorusFocus::Search {
+                    "enter: search  ·  down/tab: browse results  ·  D: difficulty  ·  esc: back"
+                } else {
+                    "up/down: pick  ·  enter: download  ·  tab: edit search  ·  D: difficulty  ·  esc: back"
+                };
+                draw_centered(hint, screen_height() - 56.0, 18.0, Color::new(1.0, 1.0, 1.0, 0.4));
             }
         }
 

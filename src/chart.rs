@@ -518,11 +518,60 @@ pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
     (entries, errors)
 }
 
+/// Scan several song roots at once and merge the results. The bundled songs/
+/// dir is expected first in `roots`; user-added folders follow. A song reachable
+/// from more than one root (identical source path) is kept only once, and the
+/// bundled-sinks-to-bottom sort still holds across the merged list so the
+/// defaults stay below the player's own songs.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn scan_all(roots: &[PathBuf]) -> (Vec<SongEntry>, Vec<String>) {
+    let mut entries: Vec<SongEntry> = Vec::new();
+    let mut errors = Vec::new();
+    for root in roots {
+        let (found, errs) = scan_songs(root);
+        for e in found {
+            if !entries.iter().any(|x| x.source == e.source) {
+                entries.push(e);
+            }
+        }
+        errors.extend(errs);
+    }
+    // Re-apply the bundled-to-bottom ordering over the combined list (scan_songs
+    // already sorted each root, but the merge interleaves roots).
+    let bundled = |e: &SongEntry| {
+        let (SongSource::Folder(p) | SongSource::Sng(p)) = &e.source;
+        p.file_name().is_some_and(|n| BUNDLED.contains(&n.to_string_lossy().as_ref()))
+    };
+    entries.sort_by(|a, b| bundled(a).cmp(&bundled(b)).then_with(|| a.title.cmp(&b.title)));
+    (entries, errors)
+}
+
 /// The freely-licensed songs committed to the repo (see songs/README.md).
 /// They sort below user-added songs, so a growing library stays on top.
 #[cfg(not(target_arch = "wasm32"))]
 const BUNDLED: [&str; 3] =
     ["Code Monkey.sng", "Discipline.sng", "This Week I've Been Mostly Playing Guitar.sng"];
+
+/// Whether a source is one of the repo's committed default songs — those are
+/// protected from in-game deletion so the checkout's defaults can't be removed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_bundled(source: &SongSource) -> bool {
+    let (SongSource::Folder(p) | SongSource::Sng(p)) = source;
+    p.file_name().is_some_and(|n| BUNDLED.contains(&n.to_string_lossy().as_ref()))
+}
+
+/// Delete a song from disk: removes the `.sng` file or unpacks the song folder.
+/// Refuses to touch a bundled default. Used by the menu's delete action.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn delete_song(source: &SongSource) -> Result<(), String> {
+    if is_bundled(source) {
+        return Err("that's a bundled song and can't be deleted".into());
+    }
+    match source {
+        SongSource::Sng(p) => std::fs::remove_file(p).map_err(|e| e.to_string()),
+        SongSource::Folder(p) => std::fs::remove_dir_all(p).map_err(|e| e.to_string()),
+    }
+}
 
 #[cfg(test)]
 mod sng_tests {
@@ -599,5 +648,58 @@ mod library_tests {
             assert!(entries.iter().all(|e| !e.available.is_empty()));
         }
     }
-}
 
+    /// delete_song refuses bundled defaults (the guardrail) and removes a
+    /// user-added .sng. Uses a temp copy so the real library is untouched.
+    #[test]
+    fn delete_protects_bundled_removes_user() {
+        let sample = Path::new("songs/Code Monkey.sng");
+        if !sample.exists() {
+            return;
+        }
+        // Bundled default is protected regardless of where it sits.
+        let bundled = SongSource::Sng(sample.to_path_buf());
+        assert!(is_bundled(&bundled));
+        assert!(delete_song(&bundled).is_err(), "bundled songs must not delete");
+
+        // A user song (any non-bundled name) actually deletes.
+        let tmp = std::env::temp_dir().join(format!("kw_del_{}.sng", std::process::id()));
+        std::fs::copy(sample, &tmp).unwrap();
+        let user = SongSource::Sng(tmp.clone());
+        assert!(!is_bundled(&user));
+        assert!(delete_song(&user).is_ok());
+        assert!(!tmp.exists(), "file should be gone after delete");
+    }
+
+    /// scan_all merges the bundled dir with an extra folder that itself points
+    /// back at songs/: every song appears once (dedup by source path) and the
+    /// bundled defaults still sort to the bottom.
+    #[test]
+    fn scan_all_merges_and_dedupes() {
+        let songs = Path::new("songs");
+        if !songs.exists() {
+            return;
+        }
+        let (single, _) = scan_songs(songs);
+        // The same root twice must not double the library.
+        let (merged, _) = scan_all(&[songs.to_path_buf(), songs.to_path_buf()]);
+        assert_eq!(merged.len(), single.len(), "duplicate roots dedupe to one library");
+
+        if !merged.is_empty() {
+            // Once the bundled block starts, it never yields back to a
+            // non-bundled song — defaults are pinned to the bottom.
+            let is_bundled = |e: &SongEntry| {
+                let (SongSource::Folder(p) | SongSource::Sng(p)) = &e.source;
+                p.file_name().is_some_and(|n| BUNDLED.contains(&n.to_string_lossy().as_ref()))
+            };
+            let mut seen_bundled = false;
+            for e in &merged {
+                if is_bundled(e) {
+                    seen_bundled = true;
+                } else {
+                    assert!(!seen_bundled, "a user song sorted below a bundled one");
+                }
+            }
+        }
+    }
+}
