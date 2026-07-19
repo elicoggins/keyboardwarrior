@@ -1244,7 +1244,7 @@ async fn main() {
                 if idle {
                     // Kick off a search with the current query + difficulty
                     // filter, on a worker thread. Defined as a closure so both
-                    // Enter and the D-filter key can trigger it.
+                    // Enter and the left/right filter keys can trigger it.
                     let start_search = |cs: &mut ChorusScene| {
                         let q = cs.query.trim().to_string();
                         if q.is_empty() {
@@ -1262,6 +1262,20 @@ async fn main() {
                         cs.net = Some(rx);
                     };
 
+                    // Cycle the difficulty filter and re-run the search so the
+                    // change lands immediately, keeping the caller's focus so it
+                    // works both while typing and while browsing results.
+                    let cycle_diff = |cs: &mut ChorusScene, dir: i32| {
+                        let n = chorus::DIFF_FILTERS.len();
+                        cs.diff_idx = (cs.diff_idx as i32 + dir).rem_euclid(n as i32) as usize;
+                        engine.play(&sounds.kick, 0.4);
+                        if !cs.query.trim().is_empty() {
+                            let focus = cs.focus; // start_search forces Search
+                            start_search(cs);
+                            cs.focus = focus;
+                        }
+                    };
+
                     // Tab flips focus between the query bar and the results.
                     if is_key_pressed(KeyCode::Tab) && !cs.hits.is_empty() {
                         cs.focus = match cs.focus {
@@ -1269,13 +1283,6 @@ async fn main() {
                             ChorusFocus::Results => ChorusFocus::Search,
                         };
                         engine.play(&sounds.hat, 0.4);
-                    }
-                    // D cycles the difficulty filter and re-runs the search so
-                    // the change takes effect immediately.
-                    if is_key_pressed(KeyCode::D) {
-                        cs.diff_idx = (cs.diff_idx + 1) % chorus::DIFF_FILTERS.len();
-                        engine.play(&sounds.kick, 0.4);
-                        start_search(cs);
                     }
 
                     match cs.focus {
@@ -1292,6 +1299,13 @@ async fn main() {
                             if is_key_pressed(KeyCode::Backspace) {
                                 cs.query.pop();
                             }
+                            // Left/right cycle the difficulty filter — bare
+                            // letters can't, since every letter is query text.
+                            let dir = is_key_pressed(KeyCode::Right) as i32
+                                - is_key_pressed(KeyCode::Left) as i32;
+                            if dir != 0 {
+                                cycle_diff(cs, dir);
+                            }
                             if is_key_pressed(KeyCode::Enter) {
                                 start_search(cs);
                             }
@@ -1306,6 +1320,13 @@ async fn main() {
                             // Drain typed chars so they don't queue up for when
                             // focus returns to the search box.
                             while get_char_pressed().is_some() {}
+                            // Left/right re-filter by difficulty without leaving
+                            // the results list (focus is preserved).
+                            let dir = is_key_pressed(KeyCode::Right) as i32
+                                - is_key_pressed(KeyCode::Left) as i32;
+                            if dir != 0 {
+                                cycle_diff(cs, dir);
+                            }
                             if is_key_pressed(KeyCode::Up) {
                                 if cs.sel == 0 {
                                     cs.focus = ChorusFocus::Search; // back to the box
@@ -1395,7 +1416,7 @@ async fn main() {
                 // Difficulty filter, to the right of the box.
                 let (dname, _) = chorus::DIFF_FILTERS[cs.diff_idx];
                 dtext(
-                    &format!("[D] guitar difficulty: {dname}"),
+                    &format!("< > difficulty: {dname}"),
                     bx,
                     by + 62.0,
                     17.0,
@@ -1430,20 +1451,16 @@ async fn main() {
                         format!("{}   ·   charter: {}", hit.artist, hit.charter)
                     };
                     dtext(&sub, bx + 14.0, y + 22.0, 16.0, wa(th().secondary, 0.7));
-                    // Guitar tier the chart tops out at, right-aligned in the row.
-                    let tier = format!("guitar: {}", chorus::guitar_tier_name(hit.diff_guitar));
-                    let td = msize(&tier, 16.0);
-                    dtext(&tier, bx + box_w - td.width - 14.0, y, 16.0, wa(th().accent, 0.7));
                 }
 
                 let hint = if !cs.busy.is_empty() {
                     "working...  ·  esc: back"
                 } else if cs.hits.is_empty() {
-                    "type a query  ·  enter: search  ·  D: difficulty  ·  esc: back"
+                    "type a query  ·  enter: search  ·  left/right: difficulty  ·  esc: back"
                 } else if cs.focus == ChorusFocus::Search {
-                    "enter: search  ·  down/tab: browse results  ·  D: difficulty  ·  esc: back"
+                    "enter: search  ·  left/right: difficulty  ·  down/tab: browse results  ·  esc: back"
                 } else {
-                    "up/down: pick  ·  enter: download  ·  tab: edit search  ·  D: difficulty  ·  esc: back"
+                    "up/down: pick  ·  left/right: difficulty  ·  enter: download  ·  tab: edit search  ·  esc: back"
                 };
                 draw_centered(hint, screen_height() - 56.0, 18.0, Color::new(1.0, 1.0, 1.0, 0.4));
             }

@@ -24,20 +24,8 @@ pub struct Hit {
     /// Content hash; the .sng lives at files.enchor.us/{md5}.sng.
     pub md5: String,
     /// Hardest guitar tier the chart carries: 0 Easy … 4 Expert+, or -1 if the
-    /// chart has no guitar track. Naming via [`guitar_tier_name`].
+    /// chart has no guitar track.
     pub diff_guitar: i32,
-}
-
-/// Human name for a `diff_guitar` value (see [`Hit::diff_guitar`]).
-pub fn guitar_tier_name(v: i32) -> &'static str {
-    match v {
-        0 => "Easy",
-        1 => "Medium",
-        2 => "Hard",
-        3 => "Expert",
-        4 => "Expert+",
-        _ => "no guitar",
-    }
 }
 
 /// Guitar difficulty tiers the search can filter on (name, API value). `None`
