@@ -14,9 +14,9 @@
 use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::File;
+use std::io::Read;
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{BufReader, Seek, SeekFrom};
-use std::io::Read;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
 

@@ -160,7 +160,13 @@ fn file_stem(hit: &Hit) -> String {
     };
     let cleaned: String = raw
         .chars()
-        .map(|c| if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .map(|c| {
+            if matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     let trimmed = cleaned.trim().trim_matches('.');
     if trimmed.is_empty() {

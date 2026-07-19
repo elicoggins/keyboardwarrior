@@ -73,9 +73,21 @@ struct Calibrate {
 }
 
 enum Scene {
-    Menu { sel: usize, diff_sel: usize, scroll: f32 },
-    Settings { sel: usize, menu_sel: usize },
-    Loading { rx: Receiver<LoadMsg>, song: usize, diff: usize, title: String },
+    Menu {
+        sel: usize,
+        diff_sel: usize,
+        scroll: f32,
+    },
+    Settings {
+        sel: usize,
+        menu_sel: usize,
+    },
+    Loading {
+        rx: Receiver<LoadMsg>,
+        song: usize,
+        diff: usize,
+        title: String,
+    },
     Playing(Box<Play>),
     Results(Results),
     Calibrate(Calibrate),
@@ -96,15 +108,15 @@ enum ChorusFocus {
 /// report back over `net`, so the render loop never blocks.
 #[cfg(not(target_arch = "wasm32"))]
 struct ChorusScene {
-    query: String,           // the text being typed
-    focus: ChorusFocus,      // query bar vs results list
-    diff_idx: usize,         // index into chorus::DIFF_FILTERS
-    hits: Vec<chorus::Hit>,  // results of the last search
-    sel: usize,              // highlighted result
-    menu_sel: usize,         // menu row to restore on Escape
+    query: String,                    // the text being typed
+    focus: ChorusFocus,               // query bar vs results list
+    diff_idx: usize,                  // index into chorus::DIFF_FILTERS
+    hits: Vec<chorus::Hit>,           // results of the last search
+    sel: usize,                       // highlighted result
+    menu_sel: usize,                  // menu row to restore on Escape
     net: Option<Receiver<ChorusMsg>>, // in-flight search/download, if any
-    busy: &'static str,      // "" idle, else "searching…" / "downloading…"
-    note: Option<String>,    // last error/status shown on the screen
+    busy: &'static str,               // "" idle, else "searching…" / "downloading…"
+    note: Option<String>,             // last error/status shown on the screen
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -488,7 +500,9 @@ async fn main() {
                     engine.play(&sounds.kick, 0.4);
                     // The picker is modal and blocks the render loop; that's
                     // fine — the player is deliberately paused on a dialog.
-                    if let Some(dir) = rfd::FileDialog::new().set_title("Add a song folder").pick_folder() {
+                    if let Some(dir) =
+                        rfd::FileDialog::new().set_title("Add a song folder").pick_folder()
+                    {
                         let shown = dir.display().to_string();
                         if config.add_song_dir(dir) {
                             let (s, e) = chart::scan_all(&song_roots(&config));
@@ -496,7 +510,8 @@ async fn main() {
                             scan_errors = e;
                             *sel = 0;
                             *scroll = 0.0;
-                            status_error = Some(format!("added {shown} - {} songs total", songs.len()));
+                            status_error =
+                                Some(format!("added {shown} - {} songs total", songs.len()));
                         } else {
                             status_error = Some(format!("{shown} is already in your library"));
                         }
@@ -1202,11 +1217,7 @@ async fn main() {
                                         .position(|x| x.title == title && !x.locked)
                                         .unwrap_or(0);
                                     status_error = Some(format!("added {title} to your library"));
-                                    scene = Scene::Menu {
-                                        sel: at,
-                                        diff_sel: 0,
-                                        scroll: at as f32,
-                                    };
+                                    scene = Scene::Menu { sel: at, diff_sel: 0, scroll: at as f32 };
                                     next_frame().await;
                                     continue;
                                 }
@@ -1245,11 +1256,8 @@ async fn main() {
                         cs.focus = ChorusFocus::Search;
                         let (tx, rx) = channel();
                         std::thread::spawn(move || {
-                            let _ = tx.send(ChorusMsg::Results(chorus::search(
-                                &q,
-                                1,
-                                diff.as_deref(),
-                            )));
+                            let _ =
+                                tx.send(ChorusMsg::Results(chorus::search(&q, 1, diff.as_deref())));
                         });
                         cs.net = Some(rx);
                     };
@@ -1366,8 +1374,11 @@ async fn main() {
                 let box_edge = if searching_focus { 0.8 } else { 0.35 };
                 draw_rectangle(bx, by, box_w, 40.0, Color::new(1.0, 1.0, 1.0, 0.06));
                 draw_rectangle_lines(bx, by, box_w, 40.0, 2.0, wa(th().accent, box_edge));
-                let caret =
-                    if idle && searching_focus && (get_time() * 2.0) as i64 % 2 == 0 { "_" } else { "" };
+                let caret = if idle && searching_focus && (get_time() * 2.0) as i64 % 2 == 0 {
+                    "_"
+                } else {
+                    ""
+                };
                 let placeholder = cs.query.is_empty() && searching_focus;
                 let shown = if placeholder {
                     "type a song or artist...".to_string()
@@ -1406,7 +1417,8 @@ async fn main() {
                     if y > screen_height() - 90.0 {
                         break;
                     }
-                    let selected = i == cs.sel && cs.focus == ChorusFocus::Results && cs.net.is_none();
+                    let selected =
+                        i == cs.sel && cs.focus == ChorusFocus::Results && cs.net.is_none();
                     if selected {
                         draw_rectangle(bx, y - 22.0, box_w, row_h - 8.0, wa(th().accent, 0.10));
                     }
@@ -1421,13 +1433,7 @@ async fn main() {
                     // Guitar tier the chart tops out at, right-aligned in the row.
                     let tier = format!("guitar: {}", chorus::guitar_tier_name(hit.diff_guitar));
                     let td = msize(&tier, 16.0);
-                    dtext(
-                        &tier,
-                        bx + box_w - td.width - 14.0,
-                        y,
-                        16.0,
-                        wa(th().accent, 0.7),
-                    );
+                    dtext(&tier, bx + box_w - td.width - 14.0, y, 16.0, wa(th().accent, 0.7));
                 }
 
                 let hint = if !cs.busy.is_empty() {

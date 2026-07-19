@@ -532,15 +532,8 @@ fn build_stream<T: cpal::SizedSample + cpal::FromSample<f32>>(
     rx: Receiver<Cmd>,
     garbage: Sender<Buf>,
 ) -> cpal::Stream {
-    let mut mixer = Mixer::new(
-        channels,
-        config.sample_rate.0,
-        frames,
-        timeline_start,
-        master,
-        rx,
-        garbage,
-    );
+    let mut mixer =
+        Mixer::new(channels, config.sample_rate.0, frames, timeline_start, master, rx, garbage);
     let mut scratch: Vec<f32> = Vec::new();
     device
         .build_output_stream(
