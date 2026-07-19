@@ -8,12 +8,10 @@ A rhythm typing game, copying off the homework of the wonderful project [Clone H
 cargo run --release
 ```
 
-## Adding songs — zero conversion
+## Acquiring songs
 
-The song library is read at launch — nothing is baked into the binary. A few
-freely-licensed songs are bundled to play out of the box (see
-[songs/README.md](songs/README.md) for licenses); they always stay in the
-library, and anything you add sorts above them.
+A few freely-licensed songs are bundled to play out of the box (see
+[songs/README.md](songs/README.md) for licenses).
 
 Drop a Clone Hero song into `songs/` (or one of your extra folders — see below)
 and play. Both forms work as-is:
@@ -25,20 +23,9 @@ and play. Both forms work as-is:
 
 The game reads the .sng container natively and decodes all stem formats.
 
-### From inside the game
-
-You don't have to touch the filesystem at all. From the song menu:
-
-- **`G` — get songs:** search [Chorus Encore](https://www.enchor.us) and
-  download a chart straight into your library. It's playable immediately.
-- **`A` — add folder:** point the game at another folder (e.g. an existing
-  Clone Hero `Songs` directory). It's scanned *on top of* the bundled songs and
-  remembered across launches.
-- **`F` — open songs folder:** reveal `songs/` in Finder/Explorer, so you can
-  drag downloads in.
-- **`R` — rescan:** pick up newly-added songs without restarting.
-
 ### Extra song folders
+
+If you already have a Clone Hero directory, you can point Keyboard Warrior at it.
 
 Added folders are stored in a small config file
 (`~/Library/Application Support/keyboardwarrior/config.toml` on macOS,
@@ -62,4 +49,3 @@ scanned regardless.
 - **symphonia** — ogg-vorbis / mp3 / wav / flac decoding
 - **ogg + libopus** — .opus stems
 - **midly** — RB-style `notes.mid`
-- **rfd** — native "add folder" picker; **ureq** — Chorus Encore search/download
