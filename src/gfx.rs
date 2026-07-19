@@ -36,6 +36,9 @@ pub fn msize(t: &str, size: f32) -> TextDimensions {
 /// Rasterize every glyph the game can draw once, at startup, so the atlas
 /// never grows or re-uploads mid-song. (measure_text caches glyphs too.)
 pub fn prewarm_glyphs() {
+    // Printable ASCII plus the one non-ASCII glyph the UI draws — the middot
+    // separator. (The bundled font has no em-dash/ellipsis glyph, so those must
+    // not be drawn; anything outside this set renders as a missing-glyph box.)
     let charset: String = (' '..='~').chain(['·']).collect();
     let mut bucket = SIZE_STEP;
     while bucket <= 96.0 {
