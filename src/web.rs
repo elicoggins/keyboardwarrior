@@ -91,6 +91,13 @@ fn demo_entries(bytes: Vec<u8>) -> Vec<SongEntry> {
 
 type Job = Box<dyn FnOnce()>;
 
+extern "C" {
+    // Pause/resume the demo's Web Audio context (web/kw_audio.js) around a
+    // blocking decode — see pump() for why.
+    fn kw_audio_suspend();
+    fn kw_audio_resume();
+}
+
 thread_local! {
     static PENDING: RefCell<Vec<(u32, Job)>> = const { RefCell::new(Vec::new()) };
 }
@@ -119,7 +126,20 @@ pub fn pump() {
         }
         ready
     });
+    if ready.is_empty() {
+        return;
+    }
+    // A ready job is a synchronous song decode — hundreds of milliseconds that
+    // block the event loop and, with it, the main-thread ScriptProcessorNode
+    // that drives the demo's audio (web/kw_audio.js). A callback that can't
+    // fire underruns, so the first decode of a session opens with a burst of
+    // clicks. Suspend the context across the decode: the rendering thread stops
+    // on its own thread and the gap is clean silence, then resumes. (Native
+    // decodes on a worker thread, so its real-time audio never starves — this
+    // is a browser-demo-only concern.)
+    unsafe { kw_audio_suspend() };
     for job in ready {
         job();
     }
+    unsafe { kw_audio_resume() };
 }

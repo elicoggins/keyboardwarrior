@@ -47,9 +47,24 @@
         return ctx.sampleRate;
     }
 
+    // The wasm decode runs on this same (main) thread and blocks the event
+    // loop for hundreds of ms, so onaudioprocess can't fire and the pipeline
+    // underruns into clicks. The game suspends the context across a decode:
+    // suspend halts the rendering thread (its own thread, unblocked by the
+    // stalled main thread), so the gap is clean silence instead. Both guard on
+    // state so a stray call while already suspended/running is a no-op.
+    function kw_audio_suspend() {
+        if (ctx && ctx.state === "running") ctx.suspend();
+    }
+    function kw_audio_resume() {
+        if (ctx && ctx.state === "suspended") ctx.resume();
+    }
+
     miniquad_add_plugin({
         register_plugin: function (importObject) {
             importObject.env.kw_audio_start = kw_audio_start;
+            importObject.env.kw_audio_suspend = kw_audio_suspend;
+            importObject.env.kw_audio_resume = kw_audio_resume;
         },
         version: 1,
         name: "kw_audio",
