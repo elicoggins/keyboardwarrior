@@ -1332,6 +1332,24 @@ async fn main() {
                         next_frame().await;
                         continue;
                     }
+                    // Restart: reload the same song+difficulty from the top. The
+                    // stem cache holds this song's decoded audio, so the reload
+                    // is instant — same path as the results screen's replay.
+                    if is_key_pressed(KeyCode::R) {
+                        engine.set_paused(false);
+                        engine.stop_timeline();
+                        engine.play(&sounds.kick, 0.5);
+                        let SongRef { song, diff } = play.song_ref;
+                        let rx = spawn_loader(
+                            songs[song].source.clone(),
+                            engine.sample_rate,
+                            stem_cache.clone(),
+                        );
+                        scene =
+                            Scene::Loading { rx, song, diff, title: songs[song].title.clone() };
+                        next_frame().await;
+                        continue;
+                    }
                     // Keystrokes made while paused never reach judgement
                     while get_char_pressed().is_some() {}
                     play.draw(play.pause_now);
@@ -1353,6 +1371,7 @@ async fn main() {
                     draw_strip(
                         &[&[
                             Item::act(Cap::Txt("ESC"), "resume"),
+                            Item::act(Cap::Txt("R"), "restart"),
                             Item::act(Cap::Txt("Q"), "quit to menu"),
                         ]],
                         screen_height() * 0.42 + 40.0 * k,
