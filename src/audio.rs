@@ -237,12 +237,13 @@ impl Mixer {
                         t.wh_lfo = 0.0;
                     }
                     if let Some(b) = &t.backing {
-                        // No separate lead stem: whammy the whole mix
-                        let s = if bend && t.lead.is_none() {
-                            whammy_mix(b, idx, wh, t.wh_phase, wh_win)
-                        } else {
-                            b.get(idx).copied().unwrap_or([0.0; 2])
-                        };
+                        // Backing (vocals, drums, bass, …) always plays dry:
+                        // the whammy is a lead-guitar effect and must never
+                        // touch the rest of the mix. A single-stem song (no
+                        // isolated lead) therefore gets the bar's on-screen bow
+                        // but no audio bend, instead of the whole mix — vocals
+                        // and all — being run through the pitch-down voice.
+                        let s = b.get(idx).copied().unwrap_or([0.0; 2]);
                         l += s[0];
                         r += s[1];
                     }

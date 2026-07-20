@@ -47,6 +47,22 @@ const FOOTER_INSET: f32 = 40.0;
 /// as its floor, so the two can never overlap however short the window gets.
 const FOOTER_H: f32 = 258.0;
 
+/// Seconds a corner toast stays up before it has fully faded away.
+const TOAST_LIFE: f64 = 3.2;
+
+/// A transient status message ("added …", "deleted …", a load failure) shown
+/// briefly in the menu's corner instead of parked across the screen.
+struct Toast {
+    text: String,
+    born: f64,
+}
+
+impl Toast {
+    fn new(text: impl Into<String>) -> Self {
+        Toast { text: text.into(), born: get_time() }
+    }
+}
+
 /// Mini keyboard legend drawn in the menu: every key tinted by its lane, so
 /// the lane-to-hand mapping is shown, not spelled out.
 fn draw_keyboard_legend(center_x: f32, top_y: f32) {
@@ -417,12 +433,12 @@ async fn main() {
         roots
     };
     #[cfg(not(target_arch = "wasm32"))]
-    let (mut songs, mut scan_errors) = chart::scan_all(&song_roots(&config));
+    let mut songs = chart::scan_all(&song_roots(&config));
     #[cfg(target_arch = "wasm32")]
-    let (songs, scan_errors) = web::load_demo_library().await;
+    let songs = web::load_demo_library().await;
     let mut stem_cache: StemCache = None;
-    // The most recent load failure, shown in the menu until the next attempt
-    let mut status_error: Option<String> = None;
+    // Transient status message shown briefly in the menu corner, then it fades
+    let mut toast: Option<Toast> = None;
     // Song index armed for deletion: Delete once arms the selected row, Delete
     // again on the same row removes it. Any navigation disarms.
     #[cfg(not(target_arch = "wasm32"))]
@@ -494,22 +510,14 @@ async fn main() {
                         22.0 * k,
                         wa(th().secondary, 0.8),
                     );
-                    // If everything in songs/ failed to load, say why
-                    for (i, e) in scan_errors.iter().take(6).enumerate() {
-                        draw_centered(
-                            e,
-                            screen_height() * 0.5 + (44.0 + i as f32 * 22.0) * k,
-                            17.0 * k,
-                            wa(th().miss, 0.75),
-                        );
-                    }
                     next_frame().await;
                     continue;
                 }
-                // Difficulty options for the selected song
+                // Difficulty options for the selected song. A broken song has
+                // none — saturating_sub keeps diff_sel at 0 rather than underflow.
                 let diff_opts: Vec<(usize, String)> =
                     songs[*sel].available.iter().map(|&d| (d, DIFF_NAMES[d].to_string())).collect();
-                *diff_sel = (*diff_sel).min(diff_opts.len() - 1);
+                *diff_sel = (*diff_sel).min(diff_opts.len().saturating_sub(1));
 
                 let nav = nav_repeat.poll(&[KeyCode::Up, KeyCode::Down], get_frame_time());
                 if nav == Some(KeyCode::Up) {
@@ -586,15 +594,13 @@ async fn main() {
                     {
                         let shown = dir.display().to_string();
                         if config.add_song_dir(dir) {
-                            let (s, e) = chart::scan_all(&song_roots(&config));
-                            songs = s;
-                            scan_errors = e;
+                            songs = chart::scan_all(&song_roots(&config));
                             *sel = 0;
                             *scroll = 0.0;
-                            status_error =
-                                Some(format!("added {shown} - {} songs total", songs.len()));
+                            toast =
+                                Some(Toast::new(format!("added {shown} - {} songs total", songs.len())));
                         } else {
-                            status_error = Some(format!("{shown} is already in your library"));
+                            toast = Some(Toast::new(format!("{shown} is already in your library")));
                         }
                     }
                 }
@@ -602,39 +608,35 @@ async fn main() {
                 if is_key_pressed(KeyCode::F) {
                     engine.play(&sounds.kick, 0.4);
                     if let Err(e) = open_in_file_manager(std::path::Path::new("songs")) {
-                        status_error = Some(format!("couldn't open songs folder: {e}"));
+                        toast = Some(Toast::new(format!("couldn't open songs folder: {e}")));
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 if is_key_pressed(KeyCode::R) {
                     engine.play(&sounds.kick, 0.4);
-                    let (s, e) = chart::scan_all(&song_roots(&config));
-                    songs = s;
-                    scan_errors = e;
+                    songs = chart::scan_all(&song_roots(&config));
                     *sel = (*sel).min(songs.len().saturating_sub(1));
                     pending_delete = None;
-                    status_error = Some(format!("rescanned - {} songs", songs.len()));
+                    toast = Some(Toast::new(format!("rescanned - {} songs", songs.len())));
                 }
                 // Delete: two presses on the same row remove the song from disk.
                 #[cfg(not(target_arch = "wasm32"))]
                 if is_key_pressed(KeyCode::Delete) || is_key_pressed(KeyCode::Backspace) {
                     let row = *sel;
                     if chart::is_bundled(&songs[row].source) {
-                        status_error = Some("bundled default songs can't be deleted".into());
+                        toast = Some(Toast::new("bundled default songs can't be deleted"));
                         pending_delete = None;
                     } else if pending_delete == Some(row) {
                         // Confirmed — remove it, then rescan and fix selection.
                         let title = songs[row].title.clone();
                         match chart::delete_song(&songs[row].source) {
                             Ok(()) => {
-                                let (s, e) = chart::scan_all(&song_roots(&config));
-                                songs = s;
-                                scan_errors = e;
+                                songs = chart::scan_all(&song_roots(&config));
                                 *sel = row.min(songs.len().saturating_sub(1));
-                                status_error = Some(format!("deleted {title}"));
+                                toast = Some(Toast::new(format!("deleted {title}")));
                                 engine.play(&sounds.kick, 0.5);
                             }
-                            Err(e) => status_error = Some(format!("couldn't delete {title}: {e}")),
+                            Err(e) => toast = Some(Toast::new(format!("couldn't delete {title}: {e}"))),
                         }
                         pending_delete = None;
                     } else {
@@ -664,9 +666,15 @@ async fn main() {
                     next_frame().await;
                     continue;
                 }
-                if is_key_pressed(KeyCode::Enter) {
+                // A broken song can't be launched — nudge, don't crash on its
+                // empty difficulty list. (It's still selectable so it can be
+                // deleted.)
+                if is_key_pressed(KeyCode::Enter) && songs[*sel].error.is_some() {
+                    engine.play(&sounds.miss, 0.3);
+                    toast = Some(Toast::new("this song failed to load - it can't be played"));
+                } else if is_key_pressed(KeyCode::Enter) {
                     engine.play(&sounds.kick, 0.5);
-                    status_error = None;
+                    toast = None;
                     let (row, d) = (*sel, diff_opts[*diff_sel].0);
                     let rx = spawn_loader(
                         songs[row].source.clone(),
@@ -697,23 +705,33 @@ async fn main() {
                     Color::new(0.35, 0.85, 1.0, 0.6 + 0.3 * pulse),
                 );
 
-                // Songs that failed to scan, small in the top-left corner
-                for (i, e) in scan_errors.iter().take(3).enumerate() {
+                // Transient status message, tucked into the top-right corner
+                // and faded out over its last moments (see TOAST_LIFE). Drop it
+                // in a separate step so the draw below can borrow it.
+                if toast.as_ref().is_some_and(|t| get_time() - t.born >= TOAST_LIFE) {
+                    toast = None;
+                }
+                if let Some(t) = &toast {
+                    let age = get_time() - t.born;
+                    // Ease in over the first moment, hold, fade over the last ~0.7s.
+                    let a = ((age / 0.12).min((TOAST_LIFE - age) / 0.7)).clamp(0.0, 1.0) as f32;
+                    let size = 17.0 * k;
+                    let dims = msize(&t.text, size);
+                    let pad = 12.0 * k;
+                    let w = dims.width + pad * 2.0;
+                    let h = size + pad * 1.3;
+                    let bx = screen_width() - w - 20.0 * k;
+                    let by = 20.0 * k;
+                    draw_rectangle(bx, by, w, h, wa(th().bg, 0.92 * a));
+                    draw_rectangle(bx, by, w, h, Color::new(1.0, 1.0, 1.0, 0.06 * a));
+                    draw_rectangle_lines(bx, by, w, h, 1.5 * k, wa(th().secondary, 0.45 * a));
                     dtext(
-                        &format!("! {e}"),
-                        16.0 * k,
-                        (28.0 + i as f32 * 20.0) * k,
-                        15.0 * k,
-                        wa(th().miss, 0.55),
+                        &t.text,
+                        bx + pad,
+                        by + h / 2.0 + dims.height / 2.0,
+                        size,
+                        wa(th().secondary, 0.95 * a),
                     );
-                }
-                if scan_errors.len() > 3 {
-                    let more = format!("  + {} more", scan_errors.len() - 3);
-                    dtext(&more, 16.0 * k, (28.0 + 60.0) * k, 15.0 * k, wa(th().miss, 0.4));
-                }
-                // The last load failure, front and center
-                if let Some(err) = &status_error {
-                    draw_centered(&format!("!  {err}"), 205.0 * k, 17.0 * k, wa(th().miss, 0.85));
                 }
 
                 // The song list is a wheel of bare titles, so many songs fit
@@ -766,6 +784,9 @@ async fn main() {
                     let name_color = if song.locked {
                         // Signpost rows sit in the wheel but read as inert
                         wa(th().secondary, 0.35 * a)
+                    } else if song.error.is_some() {
+                        // Broken songs read red so they're obviously unplayable
+                        wa(th().miss, (if selected { 0.9 } else { 0.5 }) * a)
                     } else if selected {
                         wa(th().secondary, a)
                     } else {
@@ -790,9 +811,30 @@ async fn main() {
                             18.0 * k,
                             Color::new(1.0, 1.0, 1.0, 0.55 * fa),
                         );
-                        // Difficulty selector, only for the selected song
-                        let joined: Vec<String> =
-                            diff_opts
+                        // Exactly one detail line sits under the artist: the
+                        // delete prompt when this row is armed, else the song's
+                        // load error, else the difficulty selector. Only ever
+                        // one, so nothing stacks onto the row below it.
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let arming_delete = pending_delete == Some(row);
+                        #[cfg(target_arch = "wasm32")]
+                        let arming_delete = false;
+                        if arming_delete {
+                            draw_centered(
+                                "press DELETE again to remove  ·  any move cancels",
+                                y + 52.0 * k,
+                                17.0 * k,
+                                wa(th().miss, 0.9 * fa),
+                            );
+                        } else if let Some(err) = &song.error {
+                            draw_centered(
+                                &format!("failed to load: {err}"),
+                                y + 52.0 * k,
+                                17.0 * k,
+                                wa(th().miss, 0.85 * fa),
+                            );
+                        } else {
+                            let joined: Vec<String> = diff_opts
                                 .iter()
                                 .enumerate()
                                 .map(|(i, (_, n))| {
@@ -803,21 +845,11 @@ async fn main() {
                                     }
                                 })
                                 .collect();
-                        draw_centered(
-                            &joined.join("   "),
-                            y + 52.0 * k,
-                            20.0 * k,
-                            wa(th().accent, 0.85 * fa),
-                        );
-                        // Delete confirmation, in place of nothing else — a
-                        // second Delete on this row removes it.
-                        #[cfg(not(target_arch = "wasm32"))]
-                        if pending_delete == Some(row) {
                             draw_centered(
-                                "press DELETE again to remove this song  ·  any move cancels",
-                                y + 76.0 * k,
-                                17.0 * k,
-                                wa(th().miss, 0.9 * fa),
+                                &joined.join("   "),
+                                y + 52.0 * k,
+                                20.0 * k,
+                                wa(th().accent, 0.85 * fa),
                             );
                         }
                     }
@@ -1252,16 +1284,16 @@ async fn main() {
                         }
                         let play =
                             Play::new_chart(song, d, &chart, &engine, &sounds, backing, lead);
-                        status_error = None;
+                        toast = None;
                         scene = Scene::Playing(Box::new(play));
                     }
                     Ok(LoadMsg::Failed(e)) => {
-                        status_error = Some(format!("{title}: {e}"));
+                        toast = Some(Toast::new(format!("{title}: {e}")));
                         let sel = *song;
                         scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
                     }
                     Err(TryRecvError::Disconnected) => {
-                        status_error = Some(format!("{title}: loader thread died"));
+                        toast = Some(Toast::new(format!("{title}: loader thread died")));
                         let sel = *song;
                         scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
                     }
@@ -1469,14 +1501,12 @@ async fn main() {
                                 Ok(title) => {
                                     // Freshly downloaded — rescan so it's playable
                                     // now, then drop back to the menu on it.
-                                    let (s, e) = chart::scan_all(&song_roots(&config));
-                                    songs = s;
-                                    scan_errors = e;
+                                    songs = chart::scan_all(&song_roots(&config));
                                     let at = songs
                                         .iter()
                                         .position(|x| x.title == title && !x.locked)
                                         .unwrap_or(0);
-                                    status_error = Some(format!("added {title} to your library"));
+                                    toast = Some(Toast::new(format!("added {title} to your library")));
                                     scene = Scene::Menu { sel: at, diff_sel: 0, scroll: at as f32 };
                                     next_frame().await;
                                     continue;

@@ -16,13 +16,13 @@ const DEMO_SONG_URL: &str = "songs/Code Monkey.sng";
 
 /// Fetch the demo song and build the menu library, animating a download
 /// screen while the multi-megabyte .sng arrives.
-pub async fn load_demo_library() -> (Vec<SongEntry>, Vec<String>) {
+pub async fn load_demo_library() -> Vec<SongEntry> {
     let fetch = start_coroutine(async { macroquad::file::load_file(DEMO_SONG_URL).await });
     loop {
         if let Some(res) = fetch.retrieve() {
             return match res {
                 Ok(bytes) => demo_entries(bytes),
-                Err(e) => (Vec::new(), vec![format!("demo song failed to download: {e}")]),
+                Err(_) => Vec::new(),
             };
         }
         clear_background(th().bg);
@@ -52,13 +52,13 @@ pub async fn load_demo_library() -> (Vec<SongEntry>, Vec<String>) {
     }
 }
 
-fn demo_entries(bytes: Vec<u8>) -> (Vec<SongEntry>, Vec<String>) {
+fn demo_entries(bytes: Vec<u8>) -> Vec<SongEntry> {
     let source = SongSource::Bytes(Arc::new(bytes));
     match chart::load_song(&source) {
         Ok(chart) => {
             let available: Vec<usize> = (0..4).filter(|&d| chart.diffs[d].len() >= 20).collect();
             if available.is_empty() {
-                return (Vec::new(), vec!["demo song: no difficulty with enough notes".into()]);
+                return Vec::new();
             }
             let song = SongEntry {
                 title: if chart.title.is_empty() { "Code Monkey".into() } else { chart.title },
@@ -66,6 +66,7 @@ fn demo_entries(bytes: Vec<u8>) -> (Vec<SongEntry>, Vec<String>) {
                 available,
                 source,
                 locked: false,
+                error: None,
             };
             let signpost = SongEntry {
                 title: "download to expand library".into(),
@@ -73,10 +74,11 @@ fn demo_entries(bytes: Vec<u8>) -> (Vec<SongEntry>, Vec<String>) {
                 available: Vec::new(),
                 source: SongSource::Bytes(Arc::new(Vec::new())),
                 locked: true,
+                error: None,
             };
-            (vec![song, signpost], Vec::new())
+            vec![song, signpost]
         }
-        Err(e) => (Vec::new(), vec![format!("demo song: {e}")]),
+        Err(_) => Vec::new(),
     }
 }
 

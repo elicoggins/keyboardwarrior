@@ -72,6 +72,10 @@ pub struct SongEntry {
     // A non-playable signpost row (the browser demo's "download to expand
     // library" entry): drawn dimmed, skipped by menu navigation.
     pub locked: bool,
+    // A song that's on disk but failed to load (bad chart, no playable
+    // difficulty). It still shows in the menu — dimmed, with this message —
+    // so it can be selected and deleted; it just can't be played.
+    pub error: Option<String>,
 }
 
 // ---------------------------------------------------------------- tempo map
@@ -467,15 +471,15 @@ pub fn lead_stem_names(instrument: Instrument) -> &'static [&'static str] {
     }
 }
 
-/// Scan songs/ for playable songs: unpacked folders and raw .sng files.
-/// Returns the playable entries plus a human-readable reason for every
-/// song-shaped thing that couldn't be loaded, so failures aren't silent.
+/// Scan songs/ for songs: unpacked folders and raw .sng files. Every
+/// song-shaped thing becomes an entry — one that failed to load carries an
+/// `error` and no difficulties, so failures aren't silent and the player can
+/// still see and delete the offending file from the menu.
 /// (Native only — the browser demo's fixed library is built in web.rs.)
 #[cfg(not(target_arch = "wasm32"))]
-pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
+pub fn scan_songs(root: &Path) -> Vec<SongEntry> {
     let mut entries = Vec::new();
-    let mut errors = Vec::new();
-    let Ok(read) = std::fs::read_dir(root) else { return (entries, errors) };
+    let Ok(read) = std::fs::read_dir(root) else { return entries };
     for e in read.flatten() {
         let path = e.path();
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -486,12 +490,22 @@ pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
         } else {
             continue;
         };
+        // A song that fails to load still becomes a (dimmed, unplayable) entry
+        // so the player can see and delete it from the menu.
+        let broken = |source, msg: String| SongEntry {
+            title: name.clone(),
+            artist: String::new(),
+            available: Vec::new(),
+            source,
+            locked: false,
+            error: Some(msg),
+        };
         match load_song(&source) {
             Ok(chart) => {
                 let available: Vec<usize> =
                     (0..4).filter(|&d| chart.diffs[d].len() >= 20).collect();
                 if available.is_empty() {
-                    errors.push(format!("{name}: no difficulty with enough notes"));
+                    entries.push(broken(source, "no difficulty with enough notes".into()));
                     continue;
                 }
                 entries.push(SongEntry {
@@ -504,9 +518,10 @@ pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
                     available,
                     source,
                     locked: false,
+                    error: None,
                 });
             }
-            Err(err) => errors.push(format!("{name}: {err}")),
+            Err(err) => entries.push(broken(source, err)),
         }
     }
     // The user's own songs first (alphabetical), bundled songs at the bottom
@@ -515,7 +530,7 @@ pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
         p.file_name().is_some_and(|n| BUNDLED.contains(&n.to_string_lossy().as_ref()))
     };
     entries.sort_by(|a, b| bundled(a).cmp(&bundled(b)).then_with(|| a.title.cmp(&b.title)));
-    (entries, errors)
+    entries
 }
 
 /// Scan several song roots at once and merge the results. The bundled songs/
@@ -524,17 +539,14 @@ pub fn scan_songs(root: &Path) -> (Vec<SongEntry>, Vec<String>) {
 /// bundled-sinks-to-bottom sort still holds across the merged list so the
 /// defaults stay below the player's own songs.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn scan_all(roots: &[PathBuf]) -> (Vec<SongEntry>, Vec<String>) {
+pub fn scan_all(roots: &[PathBuf]) -> Vec<SongEntry> {
     let mut entries: Vec<SongEntry> = Vec::new();
-    let mut errors = Vec::new();
     for root in roots {
-        let (found, errs) = scan_songs(root);
-        for e in found {
+        for e in scan_songs(root) {
             if !entries.iter().any(|x| x.source == e.source) {
                 entries.push(e);
             }
         }
-        errors.extend(errs);
     }
     // Re-apply the bundled-to-bottom ordering over the combined list (scan_songs
     // already sorted each root, but the merge interleaves roots).
@@ -543,7 +555,7 @@ pub fn scan_all(roots: &[PathBuf]) -> (Vec<SongEntry>, Vec<String>) {
         p.file_name().is_some_and(|n| BUNDLED.contains(&n.to_string_lossy().as_ref()))
     };
     entries.sort_by(|a, b| bundled(a).cmp(&bundled(b)).then_with(|| a.title.cmp(&b.title)));
-    (entries, errors)
+    entries
 }
 
 /// The freely-licensed songs committed to the repo (see songs/README.md).
@@ -637,16 +649,16 @@ mod library_tests {
 
     #[test]
     fn scans_all_songs() {
-        let (entries, errors) = scan_songs(Path::new("songs"));
+        let entries = scan_songs(Path::new("songs"));
         for e in &entries {
-            println!("{} — {} (diffs {:?})", e.title, e.artist, e.available);
+            match &e.error {
+                Some(err) => println!("error: {} — {err}", e.title),
+                None => println!("{} — {} (diffs {:?})", e.title, e.artist, e.available),
+            }
         }
-        for e in &errors {
-            println!("error: {e}");
-        }
-        if !entries.is_empty() {
-            assert!(entries.iter().all(|e| !e.available.is_empty()));
-        }
+        // A loadable song always exposes at least one playable difficulty;
+        // only broken entries (which carry an error) may have none.
+        assert!(entries.iter().all(|e| e.error.is_some() || !e.available.is_empty()));
     }
 
     /// delete_song refuses bundled defaults (the guardrail) and removes a
@@ -680,9 +692,9 @@ mod library_tests {
         if !songs.exists() {
             return;
         }
-        let (single, _) = scan_songs(songs);
+        let single = scan_songs(songs);
         // The same root twice must not double the library.
-        let (merged, _) = scan_all(&[songs.to_path_buf(), songs.to_path_buf()]);
+        let merged = scan_all(&[songs.to_path_buf(), songs.to_path_buf()]);
         assert_eq!(merged.len(), single.len(), "duplicate roots dedupe to one library");
 
         if !merged.is_empty() {

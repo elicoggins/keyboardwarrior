@@ -166,7 +166,7 @@ mod tests {
         if !sample.exists() {
             return; // running outside the repo checkout
         }
-        let (bundled_only, _) = crate::chart::scan_all(&[bundled.to_path_buf()]);
+        let bundled_only = crate::chart::scan_all(&[bundled.to_path_buf()]);
 
         // A fresh temp folder holding one real song, standing in for a user's
         // Clone Hero library elsewhere on disk.
@@ -176,7 +176,7 @@ mod tests {
 
         // main() builds roots as [songs/, ...config.song_dirs]; mirror that.
         let roots = vec![bundled.to_path_buf(), extra.clone()];
-        let (merged, _) = crate::chart::scan_all(&roots);
+        let merged = crate::chart::scan_all(&roots);
         assert_eq!(
             merged.len(),
             bundled_only.len() + 1,
