@@ -138,6 +138,35 @@ fn chorus_list_geom(k: f32) -> (f32, f32, usize) {
     (list_top, row_h, visible)
 }
 
+/// The next selectable song when moving through the (already filtered) menu
+/// `view`. Steps one row in `dir` (Up/anything-else = Down), wrapping, and
+/// skips locked signpost rows. `sel` and the result are full-list indices;
+/// returns None only when the view is empty.
+fn step_selection(
+    view: &[usize],
+    songs: &[chart::SongEntry],
+    sel: usize,
+    dir: KeyCode,
+) -> Option<usize> {
+    if view.is_empty() {
+        return None;
+    }
+    let n = view.len();
+    let cur = view.iter().position(|&i| i == sel).unwrap_or(0);
+    let mut p = cur;
+    for _ in 0..n {
+        p = match dir {
+            KeyCode::Up => (p + n - 1) % n,
+            _ => (p + 1) % n,
+        };
+        if !songs[view[p]].locked {
+            return Some(view[p]);
+        }
+    }
+    // Every visible row is a locked signpost — stay where we are.
+    Some(view[cur])
+}
+
 /// Whether keystrokes edit the query or navigate the results list.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(PartialEq, Clone, Copy)]
@@ -439,6 +468,10 @@ async fn main() {
     let mut stem_cache: StemCache = None;
     // Transient status message shown briefly in the menu corner, then it fades
     let mut toast: Option<Toast> = None;
+    // Menu search: `;` opens a filter bar over the song list. Some(query) means
+    // the bar is open and typing edits the query (a case-insensitive match over
+    // title + artist); None means the normal single-key hotkeys are live.
+    let mut menu_search: Option<String> = None;
     // Song index armed for deletion: Delete once arms the selected row, Delete
     // again on the same row removes it. Any navigation disarms.
     #[cfg(not(target_arch = "wasm32"))]
@@ -513,6 +546,59 @@ async fn main() {
                     next_frame().await;
                     continue;
                 }
+                // Search bar: `;` opens a filter over the list. While it's open,
+                // typing edits the query and the letter hotkeys below are
+                // suspended so they don't fire as text; Escape closes and clears
+                // it, Backspace erases, every other printable key types.
+                if let Some(q) = menu_search.as_mut() {
+                    // Only printable ASCII reaches the query — the font atlas
+                    // holds ' '..='~' only, so arrow keys and other special keys
+                    // (delivered by get_char_pressed as non-printable chars that
+                    // slip past is_control) would otherwise draw as tofu.
+                    while let Some(c) = get_char_pressed() {
+                        if (' '..='~').contains(&c) {
+                            q.push(c);
+                        }
+                    }
+                    if is_key_pressed(KeyCode::Backspace) {
+                        q.pop();
+                    }
+                }
+                // Escape closes the bar, `;` opens it — both reassign
+                // `menu_search`, so they sit outside the `as_mut()` borrow above.
+                if menu_search.is_some() {
+                    if is_key_pressed(KeyCode::Escape) {
+                        menu_search = None;
+                    }
+                } else if is_key_pressed(KeyCode::Semicolon) {
+                    menu_search = Some(String::new());
+                    // Swallow the ';' so it doesn't land in the fresh query.
+                    while get_char_pressed().is_some() {}
+                    engine.play(&sounds.hat, 0.4);
+                }
+                let searching = menu_search.is_some();
+
+                // Song rows visible under the current filter, in list order. An
+                // empty/whitespace query (or a closed bar) shows everything.
+                let query = menu_search.as_deref().unwrap_or("").trim().to_lowercase();
+                let view: Vec<usize> = if query.is_empty() {
+                    (0..rows).collect()
+                } else {
+                    (0..rows)
+                        .filter(|&i| {
+                            songs[i].title.to_lowercase().contains(&query)
+                                || songs[i].artist.to_lowercase().contains(&query)
+                        })
+                        .collect()
+                };
+                // Keep the selection on a visible row: if the filter just hid
+                // it, jump to the first selectable match (skipping locked
+                // signpost rows) and reset the difficulty pick.
+                if !view.is_empty() && !view.contains(&*sel) {
+                    *sel = view.iter().copied().find(|&i| !songs[i].locked).unwrap_or(view[0]);
+                    *diff_sel = 0;
+                }
+
                 // Difficulty options for the selected song. A broken song has
                 // none — saturating_sub keeps diff_sel at 0 rather than underflow.
                 let diff_opts: Vec<(usize, String)> =
@@ -520,22 +606,12 @@ async fn main() {
                 *diff_sel = (*diff_sel).min(diff_opts.len().saturating_sub(1));
 
                 let nav = nav_repeat.poll(&[KeyCode::Up, KeyCode::Down], get_frame_time());
-                if nav == Some(KeyCode::Up) {
-                    *sel = (*sel + rows - 1) % rows;
-                    // Locked signpost rows are never selectable
-                    while songs[*sel].locked {
-                        *sel = (*sel + rows - 1) % rows;
+                if let Some(dir) = nav {
+                    if let Some(next) = step_selection(&view, &songs, *sel, dir) {
+                        *sel = next;
+                        *diff_sel = 0;
+                        engine.play(&sounds.hat, 0.4);
                     }
-                    *diff_sel = 0;
-                    engine.play(&sounds.hat, 0.4);
-                }
-                if nav == Some(KeyCode::Down) {
-                    *sel = (*sel + 1) % rows;
-                    while songs[*sel].locked {
-                        *sel = (*sel + 1) % rows;
-                    }
-                    *diff_sel = 0;
-                    engine.play(&sounds.hat, 0.4);
                 }
                 // Moving off a row cancels a pending deletion on it.
                 #[cfg(not(target_arch = "wasm32"))]
@@ -551,20 +627,22 @@ async fn main() {
                     engine.play(&sounds.hat, 0.4);
                 }
                 // Hotkeys for the common settings, mirrored on the settings
-                // screen (O) — regulars shouldn't need to leave the menu
-                if is_key_pressed(KeyCode::M) {
+                // screen (O) — regulars shouldn't need to leave the menu. All
+                // of them are suspended while the search bar is open so their
+                // letters type into the query instead.
+                if !searching && is_key_pressed(KeyCode::M) {
                     cycle(&TEXT_MODE_IDX, TEXT_MODES.len(), 1);
                     engine.play(&sounds.kick, 0.4);
                 }
-                if is_key_pressed(KeyCode::T) {
+                if !searching && is_key_pressed(KeyCode::T) {
                     cycle(&THEME_IDX, THEMES.len(), 1);
                     engine.play(&sounds.kick, 0.4);
                 }
-                if is_key_pressed(KeyCode::V) {
+                if !searching && is_key_pressed(KeyCode::V) {
                     cycle(&SPEED_IDX, SPEEDS.len(), 1);
                     engine.play(&sounds.kick, 0.4);
                 }
-                if is_key_pressed(KeyCode::C) {
+                if !searching && is_key_pressed(KeyCode::C) {
                     engine.play(&sounds.kick, 0.4);
                     engine.start_timeline(1.0, None, None);
                     scene = Scene::Calibrate(Calibrate {
@@ -576,7 +654,7 @@ async fn main() {
                     next_frame().await;
                     continue;
                 }
-                if is_key_pressed(KeyCode::S) {
+                if !searching && is_key_pressed(KeyCode::S) {
                     engine.play(&sounds.kick, 0.4);
                     scene = Scene::Settings { sel: 0, menu_sel: *sel };
                     next_frame().await;
@@ -585,7 +663,7 @@ async fn main() {
                 // Song-library management (native only — the browser demo has a
                 // fixed library and no filesystem).
                 #[cfg(not(target_arch = "wasm32"))]
-                if is_key_pressed(KeyCode::A) {
+                if !searching && is_key_pressed(KeyCode::A) {
                     engine.play(&sounds.kick, 0.4);
                     // The picker is modal and blocks the render loop; that's
                     // fine — the player is deliberately paused on a dialog.
@@ -605,14 +683,14 @@ async fn main() {
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                if is_key_pressed(KeyCode::F) {
+                if !searching && is_key_pressed(KeyCode::F) {
                     engine.play(&sounds.kick, 0.4);
                     if let Err(e) = open_in_file_manager(std::path::Path::new("songs")) {
                         toast = Some(Toast::new(format!("couldn't open songs folder: {e}")));
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                if is_key_pressed(KeyCode::R) {
+                if !searching && is_key_pressed(KeyCode::R) {
                     engine.play(&sounds.kick, 0.4);
                     songs = chart::scan_all(&song_roots(&config));
                     *sel = (*sel).min(songs.len().saturating_sub(1));
@@ -620,8 +698,10 @@ async fn main() {
                     toast = Some(Toast::new(format!("rescanned - {} songs", songs.len())));
                 }
                 // Delete: two presses on the same row remove the song from disk.
+                // (Suspended while searching, where Backspace erases the query.)
                 #[cfg(not(target_arch = "wasm32"))]
-                if is_key_pressed(KeyCode::Delete) || is_key_pressed(KeyCode::Backspace) {
+                if !searching && (is_key_pressed(KeyCode::Delete) || is_key_pressed(KeyCode::Backspace))
+                {
                     let row = *sel;
                     if chart::is_bundled(&songs[row].source) {
                         toast = Some(Toast::new("bundled default songs can't be deleted"));
@@ -646,7 +726,7 @@ async fn main() {
                     }
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                if is_key_pressed(KeyCode::G) {
+                if !searching && is_key_pressed(KeyCode::G) {
                     engine.play(&sounds.kick, 0.4);
                     scene = Scene::Chorus(Box::new(ChorusScene {
                         query: String::new(),
@@ -668,8 +748,10 @@ async fn main() {
                 }
                 // A broken song can't be launched — nudge, don't crash on its
                 // empty difficulty list. (It's still selectable so it can be
-                // deleted.)
-                if is_key_pressed(KeyCode::Enter) && songs[*sel].error.is_some() {
+                // deleted.) With an empty filter there's nothing to launch.
+                if is_key_pressed(KeyCode::Enter) && view.is_empty() {
+                    // nothing selected — the filter matched no songs
+                } else if is_key_pressed(KeyCode::Enter) && songs[*sel].error.is_some() {
                     engine.play(&sounds.miss, 0.3);
                     toast = Some(Toast::new("this song failed to load - it can't be played"));
                 } else if is_key_pressed(KeyCode::Enter) {
@@ -698,12 +780,41 @@ async fn main() {
                     72.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.95),
                 );
-                draw_centered(
-                    "a rhythm typing game",
-                    170.0 * k,
-                    26.0 * k,
-                    Color::new(0.35, 0.85, 1.0, 0.6 + 0.3 * pulse),
-                );
+                if searching {
+                    // Search bar in the subtitle's slot: the live query with a
+                    // blinking caret, and the match count off to the side. The
+                    // wheel below is already filtered to `view`.
+                    let q = menu_search.as_deref().unwrap_or("");
+                    let box_w = (screen_width() * 0.5).min(600.0 * k);
+                    let bx = screen_width() / 2.0 - box_w / 2.0;
+                    let by = 156.0 * k;
+                    let box_h = 34.0 * k;
+                    draw_rectangle(bx, by, box_w, box_h, Color::new(1.0, 1.0, 1.0, 0.06));
+                    draw_rectangle_lines(bx, by, box_w, box_h, 2.0 * k, wa(th().accent, 0.8));
+                    let caret = if (get_time() * 2.0) as i64 % 2 == 0 { "_" } else { "" };
+                    let (shown, col) = if q.is_empty() {
+                        ("search title or artist...".to_string(), Color::new(1.0, 1.0, 1.0, 0.3))
+                    } else {
+                        (format!("{q}{caret}"), Color::new(1.0, 1.0, 1.0, 0.9))
+                    };
+                    dtext(&shown, bx + 12.0 * k, by + 23.0 * k, 20.0 * k, col);
+                    let n = view.len();
+                    let side = format!("{n} match{}  ·  ESC closes", if n == 1 { "" } else { "es" });
+                    dtext(
+                        &side,
+                        bx + box_w + 14.0 * k,
+                        by + 23.0 * k,
+                        15.0 * k,
+                        wa(th().secondary, 0.55),
+                    );
+                } else {
+                    draw_centered(
+                        "a rhythm typing game",
+                        170.0 * k,
+                        26.0 * k,
+                        Color::new(0.35, 0.85, 1.0, 0.6 + 0.3 * pulse),
+                    );
+                }
 
                 // Transient status message, tucked into the top-right corner
                 // and faded out over its last moments (see TOAST_LIFE). Drop it
@@ -739,7 +850,11 @@ async fn main() {
                 // artist and difficulty selector, pushing its neighbors
                 // apart, and everything eases as the selection moves.
                 let dtf = get_frame_time();
-                *scroll += (*sel as f32 - *scroll) * (1.0 - (-dtf * 12.0).exp());
+                // The wheel indexes into `view` (the filtered rows), so scroll
+                // eases toward the selection's position within it, not its
+                // full-list index — otherwise a filter would scroll off-screen.
+                let sel_pos = view.iter().position(|&i| i == *sel).unwrap_or(0) as f32;
+                *scroll += (sel_pos - *scroll) * (1.0 - (-dtf * 12.0).exp());
                 // Every piece of chrome around the band is scaled, which is
                 // what keeps the band itself usable. The header and the
                 // legend/hints below it used to be fixed pixel blocks totalling
@@ -759,8 +874,9 @@ async fn main() {
                 let band_bot = (hint_top - 26.0 * k).max(band_top + spacing);
                 let cy = (band_top + band_bot) / 2.0;
                 let expand = 76.0 * k; // extra room the selected row's details take
-                for (row, song) in songs.iter().enumerate() {
-                    let off = row as f32 - *scroll;
+                for (pos, &row) in view.iter().enumerate() {
+                    let song = &songs[row];
+                    let off = pos as f32 - *scroll;
                     // Rows below the selection shift down by the expansion;
                     // centering it keeps the selected title on the band's axis
                     let shift = expand * (off + 0.5).clamp(0.0, 1.0) - expand / 2.0;
@@ -854,6 +970,16 @@ async fn main() {
                         }
                     }
                 }
+                // Filter matched nothing — say so where the wheel would be.
+                if view.is_empty() {
+                    let raw = menu_search.as_deref().unwrap_or("").trim();
+                    draw_centered(
+                        &format!("no songs match \"{raw}\""),
+                        cy,
+                        24.0 * k,
+                        wa(th().secondary, 0.7),
+                    );
+                }
 
                 // Footer, laid out from the bottom edge up: teach (legend and
                 // the scoring line), then state, then controls. One rule
@@ -901,8 +1027,11 @@ async fn main() {
                 // Arrow-key navigation isn't listed anywhere: the wheel and the
                 // difficulty row both show their own selection, and arrows on a
                 // list need no teaching.
-                let play =
-                    [Item::act(Cap::Txt("ENTER"), "play"), Item::act(Cap::Txt("S"), "settings")];
+                let play = [
+                    Item::act(Cap::Txt("ENTER"), "play"),
+                    Item::act(Cap::Txt(";"), "search"),
+                    Item::act(Cap::Txt("S"), "settings"),
+                ];
                 // Library management is native only — the browser demo ships a
                 // fixed library — and is the cluster a narrow window drops,
                 // since every one of these is also reachable from settings.
