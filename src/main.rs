@@ -27,7 +27,9 @@ mod words;
 
 use audio::{make_sounds, AudioEngine, Buf};
 use chart::{SongChart, SongSource, DIFF_NAMES};
-use gfx::{draw_centered, draw_fit, draw_frame_graph, dtext, msize, prewarm_glyphs, FRAME_LOG_LEN};
+use gfx::{
+    draw_centered, draw_fit, draw_frame_graph, dtext, msize, prewarm_glyphs, ui, FRAME_LOG_LEN,
+};
 use play::{is_typeable, lane_of, Judgement, Play, Results, SongRef};
 use settings::{
     calib_offset, cycle, flip, settings_rows, sustains_on, SettingRow, CALIB_MS, CALIB_PERIOD,
@@ -40,8 +42,9 @@ use words::{TEXT_MODES, TEXT_MODE_IDX};
 /// the lane-to-hand mapping is shown, not spelled out.
 fn draw_keyboard_legend(center_x: f32, top_y: f32) {
     let rows: [(&str, f32); 3] = [("qwertyuiop", 0.0), ("asdfghjkl;", 0.4), ("zxcvbnm,.", 1.0)];
-    let key = 26.0;
-    let gap = 5.0;
+    let k = ui();
+    let key = 26.0 * k;
+    let gap = 5.0 * k;
     let full = 10.0 * (key + gap) - gap;
     for (ri, (row, stagger)) in rows.iter().enumerate() {
         let y = top_y + ri as f32 * (key + gap);
@@ -50,14 +53,15 @@ fn draw_keyboard_legend(center_x: f32, top_y: f32) {
             let x = x0 + ci as f32 * (key + gap);
             let c = th().lane[lane_of(ch)];
             draw_rectangle(x, y, key, key, wa(c, 0.14));
-            draw_rectangle_lines(x, y, key, key, 1.5, wa(c, 0.45));
+            draw_rectangle_lines(x, y, key, key, 1.5 * k, wa(c, 0.45));
             let label = ch.to_ascii_uppercase().to_string();
-            let d = msize(&label, 13.0);
+            let size = 13.0 * k;
+            let d = msize(&label, size);
             dtext(
                 &label,
                 x + key / 2.0 - d.width / 2.0,
                 y + key / 2.0 + d.height / 2.0,
-                13.0,
+                size,
                 wa(c, 0.85),
             );
         }
@@ -96,6 +100,19 @@ enum Scene {
     Chorus(Box<ChorusScene>),
 }
 
+/// Where the Chorus results list sits and how many rows fit on screen.
+/// Scrolling and drawing both derive from this, so the row the selection
+/// thinks is visible is always the row that actually gets drawn.
+#[cfg(not(target_arch = "wasm32"))]
+fn chorus_list_geom(k: f32) -> (f32, f32, usize) {
+    let list_top = (192.0 + 128.0) * k; // search box top + list offset
+    let row_h = 52.0 * k;
+    let avail = (screen_height() - 90.0 * k) - list_top;
+    // +1 because a row sitting exactly on the last pixel still draws
+    let visible = ((avail / row_h).floor() as i32 + 1).max(1) as usize;
+    (list_top, row_h, visible)
+}
+
 /// Whether keystrokes edit the query or navigate the results list.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(PartialEq, Clone, Copy)]
@@ -108,11 +125,14 @@ enum ChorusFocus {
 /// report back over `net`, so the render loop never blocks.
 #[cfg(not(target_arch = "wasm32"))]
 struct ChorusScene {
-    query: String,                    // the text being typed
-    focus: ChorusFocus,               // query bar vs results list
-    diff_idx: usize,                  // index into chorus::DIFF_FILTERS
-    hits: Vec<chorus::Hit>,           // results of the last search
-    sel: usize,                       // highlighted result
+    query: String,          // the text being typed
+    focus: ChorusFocus,     // query bar vs results list
+    diff_idx: usize,        // index into chorus::DIFF_FILTERS
+    hits: Vec<chorus::Hit>, // results of the last search
+    sel: usize,             // highlighted result
+    scroll: usize,          // first result row drawn — the list pans
+    // with the selection instead of letting
+    // it walk off the bottom of the screen
     menu_sel: usize,                  // menu row to restore on Escape
     net: Option<Receiver<ChorusMsg>>, // in-flight search/download, if any
     busy: &'static str,               // "" idle, else "searching…" / "downloading…"
@@ -447,8 +467,14 @@ async fn main() {
             Scene::Menu { sel, diff_sel, scroll } => {
                 let rows = songs.len();
                 if rows == 0 {
+                    let k = ui();
                     clear_background(th().bg);
-                    draw_centered("KEYBOARD WARRIOR", 130.0, 72.0, Color::new(1.0, 1.0, 1.0, 0.95));
+                    draw_centered(
+                        "KEYBOARD WARRIOR",
+                        130.0 * k,
+                        72.0 * k,
+                        Color::new(1.0, 1.0, 1.0, 0.95),
+                    );
                     draw_centered(
                         if cfg!(target_arch = "wasm32") {
                             "demo song unavailable - refresh the page to retry"
@@ -456,15 +482,15 @@ async fn main() {
                             "no songs found - drop a Clone Hero .sng or song folder into songs/"
                         },
                         screen_height() * 0.5,
-                        22.0,
+                        22.0 * k,
                         wa(th().secondary, 0.8),
                     );
                     // If everything in songs/ failed to load, say why
                     for (i, e) in scan_errors.iter().take(6).enumerate() {
                         draw_centered(
                             e,
-                            screen_height() * 0.5 + 44.0 + i as f32 * 22.0,
-                            17.0,
+                            screen_height() * 0.5 + (44.0 + i as f32 * 22.0) * k,
+                            17.0 * k,
                             wa(th().miss, 0.75),
                         );
                     }
@@ -621,6 +647,7 @@ async fn main() {
                         diff_idx: 0,
                         hits: Vec::new(),
                         sel: 0,
+                        scroll: 0,
                         menu_sel: *sel,
                         net: None,
                         busy: "",
@@ -648,14 +675,20 @@ async fn main() {
                 }
 
                 clear_background(th().bg);
+                let k = ui();
                 let t = get_time();
                 let pulse = ((t * 2.0).sin() * 0.5 + 0.5) as f32;
 
-                draw_centered("KEYBOARD WARRIOR", 130.0, 72.0, Color::new(1.0, 1.0, 1.0, 0.95));
+                draw_centered(
+                    "KEYBOARD WARRIOR",
+                    130.0 * k,
+                    72.0 * k,
+                    Color::new(1.0, 1.0, 1.0, 0.95),
+                );
                 draw_centered(
                     "a rhythm typing game",
-                    170.0,
-                    26.0,
+                    170.0 * k,
+                    26.0 * k,
                     Color::new(0.35, 0.85, 1.0, 0.6 + 0.3 * pulse),
                 );
 
@@ -663,19 +696,19 @@ async fn main() {
                 for (i, e) in scan_errors.iter().take(3).enumerate() {
                     dtext(
                         &format!("! {e}"),
-                        16.0,
-                        28.0 + i as f32 * 20.0,
-                        15.0,
+                        16.0 * k,
+                        (28.0 + i as f32 * 20.0) * k,
+                        15.0 * k,
                         wa(th().miss, 0.55),
                     );
                 }
                 if scan_errors.len() > 3 {
                     let more = format!("  + {} more", scan_errors.len() - 3);
-                    dtext(&more, 16.0, 28.0 + 60.0, 15.0, wa(th().miss, 0.4));
+                    dtext(&more, 16.0 * k, (28.0 + 60.0) * k, 15.0 * k, wa(th().miss, 0.4));
                 }
                 // The last load failure, front and center
                 if let Some(err) = &status_error {
-                    draw_centered(&format!("!  {err}"), 205.0, 17.0, wa(th().miss, 0.85));
+                    draw_centered(&format!("!  {err}"), 205.0 * k, 17.0 * k, wa(th().miss, 0.85));
                 }
 
                 // The song list is a wheel of bare titles, so many songs fit
@@ -684,24 +717,38 @@ async fn main() {
                 // apart, and everything eases as the selection moves.
                 let dtf = get_frame_time();
                 *scroll += (*sel as f32 - *scroll) * (1.0 - (-dtf * 12.0).exp());
-                let hint_top = screen_height() - 130.0 - 122.0; // keyboard legend top
-                let band_top = 222.0;
-                let band_bot = hint_top - 26.0;
+                // Every piece of chrome around the band is scaled, which is
+                // what keeps the band itself usable. The header and the
+                // legend/hints below it used to be fixed pixel blocks totalling
+                // ~500 px, so a short window ate the song list from both ends —
+                // under three songs by 590 px tall, and literally zero rows by
+                // 452, with nothing on screen to say the list wasn't empty.
+                // Scaling the chrome instead means it can never claim more than
+                // its share, and since the row pitch scales with it the wheel
+                // shows a near-constant ~6-7 songs at any height.
+                let hint_top = screen_height() - (130.0 + 122.0) * k; // legend top
+                let band_top = 222.0 * k;
+                let spacing = 46.0 * k;
+                // `ui()` stops shrinking at its floor, so a window small enough
+                // to hit it can still squeeze the band shut. Keep one row's
+                // worth open regardless: overlapping the legend reads as
+                // cramped, where an empty wheel reads as "no songs installed".
+                let band_bot = (hint_top - 26.0 * k).max(band_top + spacing);
                 let cy = (band_top + band_bot) / 2.0;
-                let spacing = 46.0;
-                let expand = 76.0; // extra room the selected row's details take
+                let expand = 76.0 * k; // extra room the selected row's details take
                 for (row, song) in songs.iter().enumerate() {
                     let off = row as f32 - *scroll;
                     // Rows below the selection shift down by the expansion;
                     // centering it keeps the selected title on the band's axis
                     let shift = expand * (off + 0.5).clamp(0.0, 1.0) - expand / 2.0;
                     let y = cy + off * spacing + shift;
-                    if y < band_top - 24.0 || y > band_bot + 24.0 {
+                    if y < band_top - 24.0 * k || y > band_bot + 24.0 * k {
                         continue;
                     }
                     // Wheel opacity: fade with distance from the center and
                     // extinguish completely at the band edges
-                    let edge = (((y - band_top) / 70.0).min((band_bot - y) / 70.0)).clamp(0.0, 1.0);
+                    let fade = 70.0 * k;
+                    let edge = (((y - band_top) / fade).min((band_bot - y) / fade)).clamp(0.0, 1.0);
                     let a = (1.0 - off.abs() / 6.0).clamp(0.0, 1.0) * edge;
                     if a <= 0.02 {
                         continue;
@@ -710,7 +757,7 @@ async fn main() {
                     // title and fades the details in as the wheel eases
                     let focus = (1.0 - off.abs()).clamp(0.0, 1.0);
                     let selected = row == *sel;
-                    let size = 26.0 + 14.0 * focus;
+                    let size = (26.0 + 14.0 * focus) * k;
                     let name_color = if song.locked {
                         // Signpost rows sit in the wheel but read as inert
                         wa(th().secondary, 0.35 * a)
@@ -723,7 +770,7 @@ async fn main() {
                         let dims = msize(&song.title, size);
                         dtext(
                             ">",
-                            screen_width() / 2.0 - dims.width / 2.0 - 40.0,
+                            screen_width() / 2.0 - dims.width / 2.0 - 40.0 * k,
                             y,
                             size,
                             Color::new(1.0, 1.0, 1.0, (0.5 + 0.5 * pulse) * a * focus),
@@ -734,8 +781,8 @@ async fn main() {
                         let fa = focus * a;
                         draw_centered(
                             &song.artist,
-                            y + 26.0,
-                            18.0,
+                            y + 26.0 * k,
+                            18.0 * k,
                             Color::new(1.0, 1.0, 1.0, 0.55 * fa),
                         );
                         // Difficulty selector, only for the selected song
@@ -753,8 +800,8 @@ async fn main() {
                                 .collect();
                         draw_centered(
                             &joined.join("   "),
-                            y + 52.0,
-                            20.0,
+                            y + 52.0 * k,
+                            20.0 * k,
                             wa(th().accent, 0.85 * fa),
                         );
                         // Delete confirmation, in place of nothing else — a
@@ -763,16 +810,16 @@ async fn main() {
                         if pending_delete == Some(row) {
                             draw_centered(
                                 "press DELETE again to remove this song  ·  any move cancels",
-                                y + 76.0,
-                                17.0,
+                                y + 76.0 * k,
+                                17.0 * k,
                                 wa(th().miss, 0.9 * fa),
                             );
                         }
                     }
                 }
 
-                let hint_y = screen_height() - 130.0;
-                draw_keyboard_legend(screen_width() / 2.0, hint_y - 122.0);
+                let hint_y = screen_height() - 130.0 * k;
+                draw_keyboard_legend(screen_width() / 2.0, hint_y - 122.0 * k);
                 draw_centered(
                     // The browser demo has no whammy bar (real app only)
                     if cfg!(target_arch = "wasm32") {
@@ -780,8 +827,8 @@ async fn main() {
                     } else {
                         "gold gems build star power  ·  SPACE unleashes it  ·  SHIFT for whammy bar"
                     },
-                    hint_y + 28.0,
-                    20.0,
+                    hint_y + 28.0 * k,
+                    20.0 * k,
                     wa(th().accent, 0.45),
                 );
                 let mode_name =
@@ -799,9 +846,9 @@ async fn main() {
                         engine.master() * 100.0
                     ),
                     screen_width() / 2.0,
-                    hint_y + 56.0,
-                    20.0,
-                    screen_width() - 32.0,
+                    hint_y + 56.0 * k,
+                    20.0 * k,
+                    screen_width() - 32.0 * k,
                     wa(th().secondary, 0.7),
                 );
                 draw_centered(
@@ -812,8 +859,8 @@ async fn main() {
                     } else {
                         "up/down: song · left/right: difficulty · enter: play · O: settings · A: add folder · F: open songs · R: rescan · G: get songs · del: remove"
                     },
-                    hint_y + 84.0,
-                    18.0,
+                    hint_y + 84.0 * k,
+                    18.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.3),
                 );
             }
@@ -867,17 +914,18 @@ async fn main() {
                 let row = rows[*sel];
 
                 clear_background(th().bg);
+                let k = ui();
                 let t = get_time();
                 let pulse = ((t * 2.0).sin() * 0.5 + 0.5) as f32;
-                draw_centered("SETTINGS", 130.0, 56.0, Color::new(1.0, 1.0, 1.0, 0.95));
+                draw_centered("SETTINGS", 130.0 * k, 56.0 * k, Color::new(1.0, 1.0, 1.0, 0.95));
                 let cx = screen_width() / 2.0;
-                let top = 210.0;
-                let spacing = 40.0;
+                let top = 210.0 * k;
+                let spacing = 40.0 * k;
                 for (i, r) in rows.iter().enumerate() {
                     let y = top + i as f32 * spacing;
                     let selected = i == *sel;
-                    let indent = if r.indented() { 26.0 } else { 0.0 };
-                    let size = 22.0;
+                    let indent = if r.indented() { 26.0 * k } else { 0.0 };
+                    let size = 22.0 * k;
                     let label_a = if selected {
                         0.95
                     } else if r.indented() {
@@ -886,12 +934,12 @@ async fn main() {
                         0.60
                     };
                     let ld = msize(r.label(), size);
-                    let lx = cx - 44.0 - ld.width + indent;
+                    let lx = cx - 44.0 * k - ld.width + indent;
                     dtext(r.label(), lx, y, size, Color::new(1.0, 1.0, 1.0, label_a));
                     if selected {
                         dtext(
                             ">",
-                            lx - 30.0,
+                            lx - 30.0 * k,
                             y,
                             size,
                             Color::new(1.0, 1.0, 1.0, 0.5 + 0.5 * pulse),
@@ -899,21 +947,21 @@ async fn main() {
                     }
                     let v = r.value(&engine);
                     if selected {
-                        dtext(&format!("< {} >", v), cx + 44.0, y, size, wa(th().accent, 0.95));
+                        dtext(&format!("< {} >", v), cx + 44.0 * k, y, size, wa(th().accent, 0.95));
                     } else {
-                        dtext(&v, cx + 60.0, y, size, wa(th().secondary, 0.55));
+                        dtext(&v, cx + 60.0 * k, y, size, wa(th().secondary, 0.55));
                     }
                 }
                 draw_centered(
                     row.desc(),
-                    top + rows.len() as f32 * spacing + 34.0,
-                    17.0,
+                    top + rows.len() as f32 * spacing + 34.0 * k,
+                    17.0 * k,
                     wa(th().secondary, 0.7),
                 );
                 draw_centered(
                     "up/down: select   ·   left/right: change   ·   esc: back",
-                    screen_height() - 60.0,
-                    18.0,
+                    screen_height() - 60.0 * k,
+                    18.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.3),
                 );
             }
@@ -946,16 +994,17 @@ async fn main() {
                         screen_height(),
                         Color::new(0.0, 0.0, 0.0, 0.55),
                     );
+                    let k = ui();
                     draw_centered(
                         "PAUSED",
                         screen_height() * 0.42,
-                        72.0,
+                        72.0 * k,
                         Color::new(1.0, 1.0, 1.0, 0.95),
                     );
                     draw_centered(
                         "esc: resume   ·   q: quit to menu",
-                        screen_height() * 0.42 + 44.0,
-                        22.0,
+                        screen_height() * 0.42 + 44.0 * k,
+                        22.0 * k,
                         Color::new(1.0, 1.0, 1.0, 0.55),
                     );
                     next_frame().await;
@@ -1010,20 +1059,21 @@ async fn main() {
                 }
 
                 clear_background(th().bg);
+                let k = ui();
                 let (grade, gcolor) = r.grade();
-                draw_centered(grade, 220.0, 160.0, gcolor);
+                draw_centered(grade, 220.0 * k, 160.0 * k, gcolor);
                 draw_centered(
                     &format!("{}  ·  {}", r.title, r.diff_name),
-                    270.0,
-                    26.0,
+                    270.0 * k,
+                    26.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.5),
                 );
 
-                draw_centered(&format!("{}", r.score), 350.0, 56.0, WHITE);
+                draw_centered(&format!("{}", r.score), 350.0 * k, 56.0 * k, WHITE);
                 draw_centered(
                     &format!("{:.1}% acc   ·   {} max combo", r.accuracy, r.max_combo),
-                    395.0,
-                    24.0,
+                    395.0 * k,
+                    24.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.7),
                 );
 
@@ -1035,15 +1085,15 @@ async fn main() {
                     ("STRAY KEYS", r.strays, Color::new(1.0, 1.0, 1.0, 0.4)),
                 ];
                 for (i, (label, count, color)) in rows.iter().enumerate() {
-                    let y = 460.0 + i as f32 * 34.0;
+                    let y = (460.0 + i as f32 * 34.0) * k;
                     let text = format!("{:<11} {:>4}", label, count);
-                    draw_centered(&text, y, 26.0, *color);
+                    draw_centered(&text, y, 26.0 * k, *color);
                 }
 
                 draw_centered(
                     "R to play again   ·   enter for menu",
-                    680.0,
-                    20.0,
+                    680.0 * k,
+                    20.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.4),
                 );
             }
@@ -1081,23 +1131,24 @@ async fn main() {
                     Err(TryRecvError::Empty) => {
                         // Still decoding on the worker thread: keep animating
                         clear_background(th().bg);
+                        let k = ui();
                         draw_centered(
                             "loading",
-                            screen_height() * 0.44 - 40.0,
-                            20.0,
+                            screen_height() * 0.44 - 40.0 * k,
+                            20.0 * k,
                             wa(th().secondary, 0.75),
                         );
-                        draw_centered(title, screen_height() * 0.44, 30.0, WHITE);
-                        let bw = 280.0;
+                        draw_centered(title, screen_height() * 0.44, 30.0 * k, WHITE);
+                        let bw = 280.0 * k;
                         let bx = screen_width() / 2.0 - bw / 2.0;
                         let by = screen_height() * 0.5;
-                        draw_rectangle(bx, by, bw, 4.0, Color::new(1.0, 1.0, 1.0, 0.12));
+                        draw_rectangle(bx, by, bw, 4.0 * k, Color::new(1.0, 1.0, 1.0, 0.12));
                         let ph = ((get_time() * 0.8) % 1.0) as f32;
-                        let sw = 90.0;
+                        let sw = 90.0 * k;
                         let sx = bx - sw + (bw + sw) * ph;
                         let (x0, x1) = (sx.max(bx), (sx + sw).min(bx + bw));
                         if x1 > x0 {
-                            draw_rectangle(x0, by, x1 - x0, 4.0, wa(th().accent, 0.9));
+                            draw_rectangle(x0, by, x1 - x0, 4.0 * k, wa(th().accent, 0.9));
                         }
                     }
                 }
@@ -1158,11 +1209,12 @@ async fn main() {
                 }
 
                 clear_background(th().bg);
-                draw_centered("CALIBRATION", 120.0, 48.0, Color::new(1.0, 1.0, 1.0, 0.95));
+                let k = ui();
+                draw_centered("CALIBRATION", 120.0 * k, 48.0 * k, Color::new(1.0, 1.0, 1.0, 0.95));
                 draw_centered(
                     "tap any letter key exactly on each tick",
-                    162.0,
-                    20.0,
+                    162.0 * k,
+                    20.0 * k,
                     wa(th().secondary, 0.8),
                 );
                 let (cx, cyy) = (screen_width() / 2.0, screen_height() * 0.40);
@@ -1171,38 +1223,39 @@ async fn main() {
                     draw_circle_lines(
                         cx,
                         cyy,
-                        30.0 + 40.0 * ph,
-                        3.0,
+                        (30.0 + 40.0 * ph) * k,
+                        3.0 * k,
                         wa(th().accent, 1.0 - 0.85 * ph),
                     );
                 }
-                draw_circle(cx, cyy, 10.0, wa(th().accent, 0.9));
+                draw_circle(cx, cyy, 10.0 * k, wa(th().accent, 0.9));
 
                 // Tap scatter: early taps land left of center, late taps right
-                let aw = 320.0;
+                let aw = 320.0 * k;
                 let ay = screen_height() * 0.60;
                 draw_line(
                     cx - aw / 2.0,
                     ay,
                     cx + aw / 2.0,
                     ay,
-                    2.0,
+                    2.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.15),
                 );
-                draw_line(cx, ay - 10.0, cx, ay + 10.0, 2.0, Color::new(1.0, 1.0, 1.0, 0.3));
+                let tick = 10.0 * k;
+                draw_line(cx, ay - tick, cx, ay + tick, 2.0 * k, Color::new(1.0, 1.0, 1.0, 0.3));
                 dtext(
                     "early",
-                    cx - aw / 2.0 - 4.0,
-                    ay + 26.0,
-                    15.0,
+                    cx - aw / 2.0 - 4.0 * k,
+                    ay + 26.0 * k,
+                    15.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.3),
                 );
-                let ld = msize("late", 15.0);
+                let ld = msize("late", 15.0 * k);
                 dtext(
                     "late",
-                    cx + aw / 2.0 - ld.width + 4.0,
-                    ay + 26.0,
-                    15.0,
+                    cx + aw / 2.0 - ld.width + 4.0 * k,
+                    ay + 26.0 * k,
+                    15.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.3),
                 );
                 let n = cal.taps.len();
@@ -1210,17 +1263,18 @@ async fn main() {
                     let x =
                         (cx + (*d as f32 / 0.150) * (aw / 2.0)).clamp(cx - aw / 2.0, cx + aw / 2.0);
                     let a = 0.2 + 0.6 * (i + 1) as f32 / n as f32;
-                    draw_circle(x, ay, 4.0, Color::new(1.0, 1.0, 1.0, a));
+                    draw_circle(x, ay, 4.0 * k, Color::new(1.0, 1.0, 1.0, a));
                 }
                 if !cal.taps.is_empty() {
                     let m = median(&cal.taps);
                     let mx =
                         (cx + (m as f32 / 0.150) * (aw / 2.0)).clamp(cx - aw / 2.0, cx + aw / 2.0);
-                    draw_line(mx, ay - 14.0, mx, ay + 14.0, 3.0, wa(th().accent, 0.9));
+                    let arm = 14.0 * k;
+                    draw_line(mx, ay - arm, mx, ay + arm, 3.0 * k, wa(th().accent, 0.9));
                     draw_centered(
                         &format!("offset {:+.0} ms   ({} taps)", m * 1000.0, n),
-                        ay + 58.0,
-                        24.0,
+                        ay + 58.0 * k,
+                        24.0 * k,
                         wa(th().accent, 0.9),
                     );
                 }
@@ -1230,8 +1284,8 @@ async fn main() {
                     } else {
                         "tap along with at least 4 ticks   ·   esc: cancel"
                     },
-                    screen_height() - 80.0,
-                    20.0,
+                    screen_height() - 80.0 * k,
+                    20.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.45),
                 );
             }
@@ -1249,6 +1303,7 @@ async fn main() {
                                     cs.note = (hits.is_empty()).then(|| "no matches".to_string());
                                     cs.hits = hits;
                                     cs.sel = 0;
+                                    cs.scroll = 0;
                                 }
                                 Err(e) => cs.note = Some(e),
                             }
@@ -1364,6 +1419,7 @@ async fn main() {
                             if is_key_pressed(KeyCode::Down) && !cs.hits.is_empty() {
                                 cs.focus = ChorusFocus::Results;
                                 cs.sel = 0;
+                                cs.scroll = 0;
                                 engine.play(&sounds.hat, 0.4);
                             }
                         }
@@ -1391,6 +1447,13 @@ async fn main() {
                             if nav == Some(KeyCode::Down) && cs.sel + 1 < cs.hits.len() {
                                 cs.sel += 1;
                                 engine.play(&sounds.hat, 0.4);
+                            }
+                            // Pan the window to wherever the selection went
+                            let (_, _, visible) = chorus_list_geom(ui());
+                            if cs.sel < cs.scroll {
+                                cs.scroll = cs.sel;
+                            } else if cs.sel >= cs.scroll + visible {
+                                cs.scroll = cs.sel + 1 - visible;
                             }
                             if is_key_pressed(KeyCode::Enter) && cs.sel < cs.hits.len() {
                                 // Download the highlighted hit.
@@ -1424,30 +1487,32 @@ async fn main() {
 
                 // ---- draw ----
                 clear_background(th().bg);
-                draw_centered("GET SONGS", 96.0, 48.0, Color::new(1.0, 1.0, 1.0, 0.95));
+                let k = ui();
+                draw_centered("GET SONGS", 96.0 * k, 48.0 * k, Color::new(1.0, 1.0, 1.0, 0.95));
                 draw_centered(
                     "search Chorus Encore  ·  full chart (every charted difficulty) downloads into your songs folder",
-                    136.0,
-                    18.0,
+                    136.0 * k,
+                    18.0 * k,
                     wa(th().secondary, 0.8),
                 );
                 // External-source disclaimer: these files come from a third party.
                 draw_centered(
                     "charts are community uploads from enchor.us  ·  download at your own risk",
-                    160.0,
-                    15.0,
+                    160.0 * k,
+                    15.0 * k,
                     Color::new(1.0, 0.8, 0.4, 0.55),
                 );
                 let cx = screen_width() / 2.0;
 
                 // Search box
-                let box_w = (screen_width() * 0.6).min(680.0);
+                let box_w = (screen_width() * 0.6).min(680.0 * k);
                 let bx = cx - box_w / 2.0;
-                let by = 192.0;
+                let by = 192.0 * k;
+                let box_h = 40.0 * k;
                 let searching_focus = cs.focus == ChorusFocus::Search;
                 let box_edge = if searching_focus { 0.8 } else { 0.35 };
-                draw_rectangle(bx, by, box_w, 40.0, Color::new(1.0, 1.0, 1.0, 0.06));
-                draw_rectangle_lines(bx, by, box_w, 40.0, 2.0, wa(th().accent, box_edge));
+                draw_rectangle(bx, by, box_w, box_h, Color::new(1.0, 1.0, 1.0, 0.06));
+                draw_rectangle_lines(bx, by, box_w, box_h, 2.0 * k, wa(th().accent, box_edge));
                 let caret = if idle && searching_focus && (get_time() * 2.0) as i64 % 2 == 0 {
                     "_"
                 } else {
@@ -1464,46 +1529,85 @@ async fn main() {
                 } else {
                     Color::new(1.0, 1.0, 1.0, 0.9)
                 };
-                dtext(&shown, bx + 14.0, by + 27.0, 22.0, q_color);
+                dtext(&shown, bx + 14.0 * k, by + 27.0 * k, 22.0 * k, q_color);
 
                 // Difficulty filter, to the right of the box.
                 let (dname, _) = chorus::DIFF_FILTERS[cs.diff_idx];
                 dtext(
                     &format!("< > difficulty: {dname}"),
                     bx,
-                    by + 62.0,
-                    17.0,
+                    by + 62.0 * k,
+                    17.0 * k,
                     wa(th().secondary, 0.75),
                 );
 
                 // Busy / status line
                 if !cs.busy.is_empty() {
-                    draw_centered(cs.busy, by + 92.0, 20.0, wa(th().accent, 0.9));
+                    draw_centered(cs.busy, by + 92.0 * k, 20.0 * k, wa(th().accent, 0.9));
                 } else if let Some(note) = &cs.note {
-                    draw_centered(note, by + 92.0, 18.0, wa(th().miss, 0.8));
+                    draw_centered(note, by + 92.0 * k, 18.0 * k, wa(th().miss, 0.8));
                 }
 
-                // Results
-                let list_top = by + 128.0;
-                let row_h = 52.0;
-                for (i, hit) in cs.hits.iter().enumerate() {
-                    let y = list_top + i as f32 * row_h;
-                    if y > screen_height() - 90.0 {
+                // Results, panned so the selection is always on screen
+                let (list_top, row_h, visible) = chorus_list_geom(k);
+                // Growing the window fits more rows than the offset assumed —
+                // pull it back so the list can't sit with a blank tail
+                cs.scroll = cs.scroll.min(cs.hits.len().saturating_sub(visible));
+
+                // Selection band, bracketed to the two lines of the row from
+                // the font's own metrics: `dtext` puts a string's ink in
+                // `Rect(x, y - offset_y, w, h)`, so a band hung off the title's
+                // baseline sits too high — it left a gap above the title and
+                // cut the subtitle's descenders. Measured off a fixed sample
+                // carrying both an ascender and a descender, so every row's
+                // band is identical no matter what the row happens to say.
+                let (band_top, band_h) = {
+                    let pad = 3.0 * k;
+                    let name_m = msize("Ag", 22.0 * k);
+                    let sub_m = msize("Ag", 16.0 * k);
+                    let top = -name_m.offset_y - pad;
+                    let bot = 22.0 * k - sub_m.offset_y + sub_m.height + pad;
+                    // Never let the band close the gap to the next row, however
+                    // the font's metrics come out
+                    (top, (bot - top).min(row_h - 6.0 * k))
+                };
+                for (i, hit) in cs.hits.iter().enumerate().skip(cs.scroll) {
+                    let y = list_top + (i - cs.scroll) as f32 * row_h;
+                    if y > screen_height() - 90.0 * k {
                         break;
                     }
                     let selected =
                         i == cs.sel && cs.focus == ChorusFocus::Results && cs.net.is_none();
                     if selected {
-                        draw_rectangle(bx, y - 22.0, box_w, row_h - 8.0, wa(th().accent, 0.10));
+                        draw_rectangle(bx, y + band_top, box_w, band_h, wa(th().accent, 0.10));
                     }
                     let name_a = if selected { 0.95 } else { 0.7 };
-                    dtext(&hit.name, bx + 14.0, y, 22.0, Color::new(1.0, 1.0, 1.0, name_a));
+                    dtext(&hit.name, bx + 14.0 * k, y, 22.0 * k, Color::new(1.0, 1.0, 1.0, name_a));
                     let sub = if hit.charter.is_empty() {
                         hit.artist.clone()
                     } else {
                         format!("{}   ·   charter: {}", hit.artist, hit.charter)
                     };
-                    dtext(&sub, bx + 14.0, y + 22.0, 16.0, wa(th().secondary, 0.7));
+                    dtext(&sub, bx + 14.0 * k, y + 22.0 * k, 16.0 * k, wa(th().secondary, 0.7));
+                }
+
+                // Slim track down the right edge once the list overflows —
+                // without it there's no cue that results continue past the fold.
+                if cs.hits.len() > visible {
+                    let (tx, ty) = (bx + box_w + 8.0 * k, list_top - 22.0 * k);
+                    let track_h = visible as f32 * row_h;
+                    let frac = visible as f32 / cs.hits.len() as f32;
+                    let thumb_h = (track_h * frac).max(18.0 * k);
+                    let pos = cs.scroll as f32 / (cs.hits.len() - visible) as f32;
+                    let w = 3.0 * k;
+                    draw_rectangle(tx, ty, w, track_h, Color::new(1.0, 1.0, 1.0, 0.10));
+                    draw_rectangle(
+                        tx,
+                        ty + (track_h - thumb_h) * pos,
+                        w,
+                        thumb_h,
+                        wa(th().secondary, 0.7),
+                    );
                 }
 
                 let hint = if !cs.busy.is_empty() {
@@ -1515,7 +1619,12 @@ async fn main() {
                 } else {
                     "up/down: pick  ·  left/right: difficulty  ·  enter: download  ·  tab: edit search  ·  esc: back"
                 };
-                draw_centered(hint, screen_height() - 56.0, 18.0, Color::new(1.0, 1.0, 1.0, 0.4));
+                draw_centered(
+                    hint,
+                    screen_height() - 56.0 * k,
+                    18.0 * k,
+                    Color::new(1.0, 1.0, 1.0, 0.4),
+                );
             }
         }
 
@@ -1524,16 +1633,17 @@ async fn main() {
             vol_flash -= get_frame_time();
             let a = (vol_flash / 0.4).clamp(0.0, 1.0);
             let v = engine.master();
-            let (bx, by, bw) = (24.0, screen_height() - 46.0, 150.0);
+            let k = ui();
+            let (bx, by, bw) = (24.0 * k, screen_height() - 46.0 * k, 150.0 * k);
             dtext(
                 &format!("VOLUME {:.0}%", v * 100.0),
                 bx,
-                by - 10.0,
-                16.0,
+                by - 10.0 * k,
+                16.0 * k,
                 Color::new(1.0, 1.0, 1.0, 0.75 * a),
             );
-            draw_rectangle(bx, by, bw, 6.0, Color::new(1.0, 1.0, 1.0, 0.12 * a));
-            draw_rectangle(bx, by, bw * v, 6.0, wa(th().secondary, 0.85 * a));
+            draw_rectangle(bx, by, bw, 6.0 * k, Color::new(1.0, 1.0, 1.0, 0.12 * a));
+            draw_rectangle(bx, by, bw * v, 6.0 * k, wa(th().secondary, 0.85 * a));
         }
         if show_frame_graph {
             draw_frame_graph(&frame_log);

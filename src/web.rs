@@ -9,7 +9,7 @@ use macroquad::experimental::coroutines::start_coroutine;
 use macroquad::prelude::*;
 
 use crate::chart::{self, SongEntry, SongSource};
-use crate::gfx::draw_centered;
+use crate::gfx::{draw_centered, ui};
 use crate::theme::{th, wa};
 
 const DEMO_SONG_URL: &str = "songs/Code Monkey.sng";
@@ -26,24 +26,27 @@ pub async fn load_demo_library() -> (Vec<SongEntry>, Vec<String>) {
             };
         }
         clear_background(th().bg);
-        draw_centered("KEYBOARD WARRIOR", 130.0, 72.0, Color::new(1.0, 1.0, 1.0, 0.95));
+        // The canvas is sized to the browser viewport, so this screen sees a
+        // wider spread of sizes than the desktop build ever does
+        let k = ui();
+        draw_centered("KEYBOARD WARRIOR", 130.0 * k, 72.0 * k, Color::new(1.0, 1.0, 1.0, 0.95));
         draw_centered(
             "downloading demo song",
             screen_height() * 0.44,
-            22.0,
+            22.0 * k,
             wa(th().secondary, 0.75),
         );
         // The same indeterminate sweep the song-loading scene uses
-        let bw = 280.0;
+        let bw = 280.0 * k;
         let bx = screen_width() / 2.0 - bw / 2.0;
         let by = screen_height() * 0.5;
-        draw_rectangle(bx, by, bw, 4.0, Color::new(1.0, 1.0, 1.0, 0.12));
+        draw_rectangle(bx, by, bw, 4.0 * k, Color::new(1.0, 1.0, 1.0, 0.12));
         let ph = ((get_time() * 0.8) % 1.0) as f32;
-        let sw = 90.0;
+        let sw = 90.0 * k;
         let sx = bx - sw + (bw + sw) * ph;
         let (x0, x1) = (sx.max(bx), (sx + sw).min(bx + bw));
         if x1 > x0 {
-            draw_rectangle(x0, by, x1 - x0, 4.0, wa(th().accent, 0.9));
+            draw_rectangle(x0, by, x1 - x0, 4.0 * k, wa(th().accent, 0.9));
         }
         next_frame().await;
     }

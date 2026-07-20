@@ -5,7 +5,7 @@ use macroquad::prelude::*;
 
 use crate::audio::{self, AudioEngine, Buf, Sounds};
 use crate::chart::{SongChart, DIFF_NAMES};
-use crate::gfx::{draw_fit, dtext, msize};
+use crate::gfx::{draw_fit, dtext, msize, ui};
 use crate::settings::{approach, sustains_on};
 use crate::theme::{mix, th, wa};
 use crate::words::{chart_seed, generate_text, text_mode, TextMode};
@@ -221,20 +221,59 @@ pub struct Play {
     end_time: f64,
 }
 
+/// Gem radius as a fraction of the distance a note travels down the highway.
+/// Taken from the reference layout (24 px gems over a 554 px run) and then
+/// held fixed — see `Geom::radius`.
+const GEM_PER_TRAVEL: f32 = 24.0 / 554.0;
+
 struct Geom {
     left: f32,
     width: f32,
     lane_w: f32,
     hit_y: f32,
     top: f32,
+    k: f32, // layout scale for the frame, cached so draw code can lean on it
 }
 
 fn geom() -> Geom {
     let w = screen_width();
     let h = screen_height();
-    let width = (w * 0.62).min(720.0);
+    let k = ui();
+    // The highway takes its share of a narrow window and grows with the scale
+    // on a wide one, rather than freezing at a fixed width and leaving a big
+    // display with a thin ribbon down the middle.
+    let width = (w * 0.62).min(720.0 * k);
     let left = (w - width) / 2.0;
-    Geom { left, width, lane_w: width / 4.0, hit_y: h * 0.78, top: 70.0 }
+    // The strike line sits at a fixed fraction of the height so the word queue
+    // below it always gets the same share. The top of the highway is then one
+    // scaled travel distance above — which is what keeps note speed honest
+    // across displays (see `radius`).
+    let hit_y = h * 0.78;
+    let top = (hit_y - 554.0 * k).max(h * 0.04);
+    Geom { left, width, lane_w: width / 4.0, hit_y, top, k }
+}
+
+impl Geom {
+    /// Distance a note covers from spawn to the strike line.
+    fn travel(&self) -> f32 {
+        self.hit_y - self.top
+    }
+
+    /// Gem radius, pinned to the travel distance instead of to the window.
+    ///
+    /// This is the one that matters for fairness. `approach()` is a constant
+    /// *time*, so a taller window used to mean a longer run in the same two
+    /// seconds — notes physically moved ~2.6x faster at 1440p than in a small
+    /// window while the gems stayed 24 px either way, which quietly changed
+    /// how hard the game was to read. Deriving the radius from the travel
+    /// distance fixes the ratio: a note always covers the same number of its
+    /// own diameters per second, on every display.
+    ///
+    /// Capped against the lane so gems can't grow into their neighbours on a
+    /// short, very wide window.
+    fn radius(&self) -> f32 {
+        (self.travel() * GEM_PER_TRAVEL).min(self.lane_w * 0.30)
+    }
 }
 
 /// Highway y for a timeline second: the strike line at `now`, the top of the
@@ -246,7 +285,7 @@ fn time_to_y(t: f64, g: &Geom, now: f64) -> f32 {
 /// The strike line, drawn as five segments with gaps at the lane centers so
 /// it never cuts through the target rings or a gem crossing it.
 fn draw_strike_line(g: &Geom, ox: f32, oy: f32, thickness: f32, color: Color) {
-    let gap = 30.0;
+    let gap = g.radius() * 1.25;
     let y = g.hit_y + oy;
     let mut x = g.left + ox;
     for lane in 0..4 {
@@ -533,23 +572,30 @@ impl Play {
         vec2(g.left + g.lane_w * (note.lane as f32 + 0.5), time_to_y(note.time, g, now))
     }
 
+    /// Effects are authored at reference scale and multiplied in here, so the
+    /// callers below stay readable — a burst throws the same-looking spray
+    /// whatever the window size. (Velocities are baked at spawn; a resize
+    /// mid-flight only affects particles already in the air, which live well
+    /// under a second.)
     fn burst(&mut self, pos: Vec2, color: Color, count: usize) {
+        let k = ui();
         for _ in 0..count {
             let ang = macroquad::rand::gen_range(0.0f32, std::f32::consts::TAU);
-            let speed = macroquad::rand::gen_range(60.0f32, 380.0);
+            let speed = macroquad::rand::gen_range(60.0f32, 380.0) * k;
             let life = macroquad::rand::gen_range(0.25f32, 0.6);
             self.particles.push(Particle {
                 pos,
                 vel: vec2(ang.cos(), ang.sin()) * speed,
                 life,
                 max_life: life,
-                size: macroquad::rand::gen_range(2.0f32, 5.5),
+                size: macroquad::rand::gen_range(2.0f32, 5.5) * k,
                 color,
             });
         }
     }
 
     fn float_text(&mut self, text: &str, pos: Vec2, color: Color, size: f32) {
+        let size = size * ui();
         self.floaters.push(Floater { text: text.to_string(), pos, life: 0.8, color, size });
     }
 
@@ -632,7 +678,7 @@ impl Play {
                         let g2 = geom();
                         self.float_text(
                             "STAR POWER +",
-                            vec2(g2.left + g2.width / 2.0, g2.hit_y - 100.0),
+                            vec2(g2.left + g2.width / 2.0, g2.hit_y - 100.0 * g2.k),
                             wa(th().accent, 1.0),
                             30.0,
                         );
@@ -648,7 +694,7 @@ impl Play {
                 if j == Judgement::Perfect {
                     self.burst(pos, WHITE, 6);
                 }
-                self.float_text(j.label(), vec2(pos.x, g.hit_y - 64.0), j.color(), 26.0);
+                self.float_text(j.label(), vec2(pos.x, g.hit_y - 64.0 * g.k), j.color(), 26.0);
                 // A sustained gem starts a hold: keep the key down for bonus
                 if self.notes[i].sustain > 0.0 {
                     let n = &self.notes[i];
@@ -673,8 +719,9 @@ impl Play {
                 self.strays += 1;
                 self.combo = 0;
                 self.jam = self.jam.min(0.35);
-                self.shake = self.shake.max(3.0);
-                self.float_text("X", vec2(g.left + g.width / 2.0, g.hit_y - 40.0), th().miss, 24.0);
+                self.shake = self.shake.max(3.0 * g.k);
+                let xpos = vec2(g.left + g.width / 2.0, g.hit_y - 40.0 * g.k);
+                self.float_text("X", xpos, th().miss, 24.0);
                 engine.play(&snd.miss, 0.18);
             }
         }
@@ -707,12 +754,12 @@ impl Play {
         for i in missed {
             self.miss += 1;
             self.combo = 0;
-            self.shake = self.shake.max(7.0);
+            self.shake = self.shake.max(7.0 * g.k);
             if let Some(p) = self.notes[i].sp_phrase {
                 self.sp_phrases[p as usize].broken = true;
             }
             let x = g.left + g.lane_w * (self.notes[i].lane as f32 + 0.5);
-            self.float_text("MISS", vec2(x, g.hit_y - 64.0), wa(th().miss, 1.0), 26.0);
+            self.float_text("MISS", vec2(x, g.hit_y - 64.0 * g.k), wa(th().miss, 1.0), 26.0);
             engine.play(&snd.miss, 0.35);
             // Fumbling the line makes the lead drop out of the mix
             if !self.ducked {
@@ -770,20 +817,22 @@ impl Play {
         self.jam += (jam_t - self.jam) * (1.0 - (-dt * 6.0).exp());
         self.strum = (self.strum - dt * 5.0).max(0.0);
 
-        // Effects
+        // Effects. Anything measured in pixels per second scales, so arcs and
+        // drifts keep their shape rather than flattening out on a big display.
+        let k = ui();
         for p in self.particles.iter_mut() {
             p.pos += p.vel * dt;
             p.vel *= 1.0 - 2.5 * dt;
-            p.vel.y += 300.0 * dt;
+            p.vel.y += 300.0 * k * dt;
             p.life -= dt;
         }
         self.particles.retain(|p| p.life > 0.0);
         for f in self.floaters.iter_mut() {
-            f.pos.y -= 55.0 * dt;
+            f.pos.y -= 55.0 * k * dt;
             f.life -= dt;
         }
         self.floaters.retain(|f| f.life > 0.0);
-        self.shake = (self.shake - 30.0 * dt).max(0.0);
+        self.shake = (self.shake - 30.0 * k * dt).max(0.0);
         self.beat_flash = (self.beat_flash - 4.0 * dt).max(0.0);
 
         // Ease the word queue toward the current word (completed words slide
@@ -827,13 +876,16 @@ impl Play {
             return;
         }
         let g = geom();
-        if g.left < 140.0 {
+        let k = g.k;
+        if g.left < 140.0 * k {
             return; // window too narrow — no gutter to stand in
         }
         let h = screen_height();
-        let s = (g.left / 200.0).clamp(0.8, 1.3);
+        // Sized off how roomy the gutter is relative to the layout scale, then
+        // scaled, so he fills his corner the same way at any window size
+        let s = (g.left / (200.0 * k)).clamp(0.8, 1.3) * k;
         let cx = g.left * 0.5;
-        let base = h - 34.0;
+        let base = h - 34.0 * k;
         let jam = self.jam;
         let slump = 1.0 - jam;
         let beat = (now / self.spb.max(0.2)) as f32 * std::f32::consts::TAU;
@@ -845,19 +897,19 @@ impl Play {
         if self.sp_active(now) {
             draw_circle(cx, base - 60.0 * s, 85.0 * s, wa(acc, 0.05));
         }
-        draw_ellipse(cx, base + 6.0, 44.0 * s, 7.0, 0.0, Color::new(0.0, 0.0, 0.0, 0.35));
+        draw_ellipse(cx, base + 6.0 * s, 44.0 * s, 7.0 * s, 0.0, Color::new(0.0, 0.0, 0.0, 0.35));
 
         let hip = vec2(cx - 2.0 * s, base - 56.0 * s + bob * 0.4);
         let sh = vec2(hip.x + 3.0 * s - 7.0 * s * slump, hip.y - 42.0 * s + bob + 7.0 * s * slump);
         // Legs — the near foot taps while he's going
-        let tap = beat.sin().max(0.0) * 7.0 * jam;
+        let tap = beat.sin().max(0.0) * 7.0 * jam * s;
         draw_line(hip.x, hip.y, cx - 19.0 * s, base - tap, 6.5 * s, a);
         draw_line(hip.x, hip.y, cx + 15.0 * s, base, 6.5 * s, a);
         draw_line(sh.x, sh.y, hip.x, hip.y, 10.0 * s, a);
         // Head nods a half-beat off the body bob, hangs when slumped
         let head = vec2(
             sh.x + 3.0 * s - 3.0 * s * slump,
-            sh.y - 17.0 * s + (beat + 1.2).sin() * 3.0 * jam + 5.0 * s * slump,
+            sh.y - 17.0 * s + (beat + 1.2).sin() * 3.0 * jam * s + 5.0 * s * slump,
         );
         draw_circle(head.x, head.y, 10.5 * s, a);
 
@@ -875,7 +927,7 @@ impl Play {
             gc.x - 2.0 * s,
             gc.y + 1.5 * s,
             13.5 * s,
-            2.0,
+            2.0 * s,
             wa(acc, 0.45 + 0.40 * jam),
         );
         draw_circle(gc.x - 2.0 * s, gc.y + 1.0 * s, 3.5 * s, wa(th().bg, 0.9));
@@ -900,6 +952,10 @@ impl Play {
         let g = geom();
         let h = screen_height();
         let ap = approach();
+        let k = g.k;
+        let radius = g.radius();
+        // How far past either edge a gem still counts as worth drawing
+        let cull = radius * 2.5;
 
         let (ox, oy) = if self.shake > 0.0 {
             (
@@ -944,19 +1000,20 @@ impl Play {
         // Strike line, drawn in segments that skip the lane circles so it
         // never runs through a gem or target ring
         let flash = 0.42 + 0.14 * self.beat_flash;
-        draw_strike_line(&g, ox, oy, 4.0, Color::new(1.0, 1.0, 1.0, flash));
+        draw_strike_line(&g, ox, oy, 4.0 * k, Color::new(1.0, 1.0, 1.0, flash));
         for lane in 0..4 {
             let x = g.left + g.lane_w * (lane as f32 + 0.5) + ox;
             let mut c = th().lane[lane];
             c.a = 0.30 + 0.12 * self.beat_flash;
-            draw_circle_lines(x, g.hit_y + oy, 24.0, 2.0, c);
+            // Target rings match the gems that land in them
+            draw_circle_lines(x, g.hit_y + oy, radius, 2.0 * k, c);
         }
 
         // Only notes near the screen need drawing: anything more than one
         // approach-window old is far below it. Ahead, the window is stretched
         // past the highway top so gems spawn above the window edge and drift
         // in instead of popping in at the top. Notes are sorted: a slice.
-        let spawn_ap = ap * ((g.hit_y + 60.0) / (g.hit_y - g.top)) as f64;
+        let spawn_ap = ap * ((g.hit_y + cull) / g.travel()) as f64;
         let visible_lo = self.notes.partition_point(|n| n.time < now - ap);
 
         // Connectors between letters of the same word
@@ -970,10 +1027,10 @@ impl Play {
             }
             let pa = self.note_pos(a, &g, now) + vec2(ox, oy);
             let pb = self.note_pos(b, &g, now) + vec2(ox, oy);
-            if pa.y < -60.0 && pb.y < -60.0 {
+            if pa.y < -cull && pb.y < -cull {
                 continue;
             }
-            draw_line(pa.x, pa.y, pb.x, pb.y, 2.0, Color::new(1.0, 1.0, 1.0, 0.13));
+            draw_line(pa.x, pa.y, pb.x, pb.y, 2.0 * k, Color::new(1.0, 1.0, 1.0, 0.13));
         }
 
         // Sustain tails run from each gem up toward its release point; drawn
@@ -986,23 +1043,24 @@ impl Play {
                 continue;
             }
             let pos = self.note_pos(n, &g, now) + vec2(ox, oy);
-            if pos.y < -60.0 || pos.y > h + 40.0 {
+            if pos.y < -cull || pos.y > h + cull {
                 continue;
             }
-            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(-20.0);
-            draw_line(pos.x, pos.y, pos.x, y_end, 5.0, wa(th().lane[n.lane], 0.22));
+            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(-20.0 * k);
+            draw_line(pos.x, pos.y, pos.x, y_end, 5.0 * k, wa(th().lane[n.lane], 0.22));
         }
 
         // Gems
-        let radius = (g.lane_w * 0.26).min(24.0);
         for n in &self.notes[visible_lo..] {
             if n.time - now > spawn_ap {
                 break;
             }
             let pos = self.note_pos(n, &g, now) + vec2(ox, oy);
-            if pos.y < -60.0 || pos.y > h + 40.0 {
+            if pos.y < -cull || pos.y > h + cull {
                 continue;
             }
+            // Letter size follows the gem, so a gem always reads as a gem
+            let label_size = radius * 1.25;
             match n.state {
                 NoteState::Pending => {
                     // Dark-bodied gem with a lane-colored ring and letter —
@@ -1011,33 +1069,45 @@ impl Play {
                     let lane_c = th().lane[n.lane];
                     let mut glow = lane_c;
                     glow.a = 0.08 + 0.20 * closeness;
-                    draw_circle(pos.x, pos.y, radius + 6.0 + 4.0 * closeness, glow);
+                    draw_circle(pos.x, pos.y, radius * (1.25 + 0.17 * closeness), glow);
                     draw_circle(pos.x, pos.y, radius, mix(th().bg, lane_c, 0.16));
                     let ring = if n.sp_phrase.is_some() { th().accent } else { lane_c };
-                    draw_circle_lines(pos.x, pos.y, radius, 2.5, wa(ring, 0.75 + 0.25 * closeness));
+                    draw_circle_lines(
+                        pos.x,
+                        pos.y,
+                        radius,
+                        2.5 * k,
+                        wa(ring, 0.75 + 0.25 * closeness),
+                    );
                     if n.sp_phrase.is_some() {
-                        draw_circle_lines(pos.x, pos.y, radius + 4.0, 1.5, wa(th().accent, 0.45));
+                        draw_circle_lines(
+                            pos.x,
+                            pos.y,
+                            radius * 1.17,
+                            1.5 * k,
+                            wa(th().accent, 0.45),
+                        );
                     }
                     let label = n.ch.to_ascii_uppercase().to_string();
-                    let dims = msize(&label, 30.0);
+                    let dims = msize(&label, label_size);
                     dtext(
                         &label,
                         pos.x - dims.width / 2.0,
                         pos.y + dims.height / 2.0,
-                        30.0,
+                        label_size,
                         mix(lane_c, WHITE, 0.25),
                     );
                 }
                 NoteState::Missed => {
                     draw_circle(pos.x, pos.y, radius, mix(th().bg, th().miss, 0.12));
-                    draw_circle_lines(pos.x, pos.y, radius, 2.0, wa(th().miss, 0.4));
+                    draw_circle_lines(pos.x, pos.y, radius, 2.0 * k, wa(th().miss, 0.4));
                     let label = n.ch.to_ascii_uppercase().to_string();
-                    let dims = msize(&label, 30.0);
+                    let dims = msize(&label, label_size);
                     dtext(
                         &label,
                         pos.x - dims.width / 2.0,
                         pos.y + dims.height / 2.0,
-                        30.0,
+                        label_size,
                         wa(th().miss, 0.45),
                     );
                 }
@@ -1053,40 +1123,49 @@ impl Play {
         for hd in &self.holds {
             let n = &self.notes[hd.note];
             let x = g.left + g.lane_w * (n.lane as f32 + 0.5) + ox;
-            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(-20.0);
+            let y_end = (time_to_y(n.time + n.sustain, &g, now) + oy).max(-20.0 * k);
             let c = th().lane[n.lane];
             let vis = self.whammy_vis;
             // Same pump rate as the audio LFO, so width and pitch breathe as one
             let pump_ph = now * std::f64::consts::TAU * audio::WH_PUMP_HZ;
             let pump = (0.5 - 0.5 * pump_ph.cos()) as f32;
-            let thick = 7.0 + (6.0 + 2.5 * pump) * vis;
+            let thick = (7.0 + (6.0 + 2.5 * pump) * vis) * k;
             if vis > 0.02 {
                 let anchor = g.hit_y + oy;
                 let wave_t = pump_ph as f32;
+                let step = 9.0 * k;
                 let mut prev = vec2(x, anchor);
-                let mut yy = anchor - 9.0;
+                let mut yy = anchor - step;
                 loop {
                     let seg_y = yy.max(y_end);
                     let d = anchor - seg_y; // distance up the tail, px
                                             // Traveling wave, pinned at the anchor so the base stays
-                                            // planted on the strike line
-                    let amp = 6.5 * vis * (d / 60.0).min(1.0);
-                    let p = vec2(x + (d * 0.055 + wave_t).sin() * amp, seg_y);
+                                            // planted on the strike line. Wavelength and ramp-in are
+                                            // scaled too, so the tail keeps its shape at any size
+                                            // instead of turning into a tight ripple when zoomed up.
+                    let amp = 6.5 * k * vis * (d / (60.0 * k)).min(1.0);
+                    let p = vec2(x + (d * 0.055 / k + wave_t).sin() * amp, seg_y);
                     // Soft halo under the core line doubles the tail's body
-                    draw_line(prev.x, prev.y, p.x, p.y, thick + 8.0, wa(c, 0.22 * vis));
+                    draw_line(prev.x, prev.y, p.x, p.y, thick + 8.0 * k, wa(c, 0.22 * vis));
                     draw_line(prev.x, prev.y, p.x, p.y, thick, wa(c, 0.78));
                     if seg_y <= y_end {
                         break;
                     }
                     prev = p;
-                    yy -= 9.0;
+                    yy -= step;
                 }
             } else {
                 draw_line(x, g.hit_y + oy, x, y_end, thick, wa(c, 0.75));
             }
-            let pump_r = (3.0 + 2.0 * pump) * vis;
-            draw_circle(x, g.hit_y + oy, 12.0 + pump_r, wa(c, 0.9));
-            draw_circle_lines(x, g.hit_y + oy, 19.0 + 3.0 * self.beat_flash, 2.0, wa(c, 0.6));
+            let pump_r = (3.0 + 2.0 * pump) * vis * k;
+            draw_circle(x, g.hit_y + oy, 12.0 * k + pump_r, wa(c, 0.9));
+            draw_circle_lines(
+                x,
+                g.hit_y + oy,
+                (19.0 + 3.0 * self.beat_flash) * k,
+                2.0 * k,
+                wa(c, 0.6),
+            );
         }
 
         // Particles & floaters
@@ -1116,18 +1195,31 @@ impl Play {
                 let w = self.notes[i].word;
                 (w, i - self.word_starts[w])
             });
+        // The queue lives between the strike line and the bottom edge. That
+        // band is a fixed share of the height, so rather than let the far rows
+        // drop off a short window — which costs the player their read-ahead,
+        // and used to start happening just under the default window size — the
+        // row pitch compresses to whatever room there is. The full lookahead
+        // is always on screen; it just sits tighter when there's less room.
+        const QUEUE_ROWS: f32 = 3.6;
+        let queue_top = g.hit_y + 84.0 * k;
+        let room = (h - 6.0 * k) - queue_top;
+        // Floored: on a window short enough that `room` goes negative the
+        // rows would otherwise march back up into the highway. They spill off
+        // the bottom instead, which the cull below already handles.
+        let row_h = (25.0 * k).min(room / QUEUE_ROWS).max(8.0 * k);
         let first_row = (self.word_anim.floor().max(0.0)) as usize;
         for wi in first_row..self.words.len() {
             let offset = wi as f32 - self.word_anim;
-            if offset > 3.6 {
+            if offset > QUEUE_ROWS {
                 break;
             }
-            let y = g.hit_y + 84.0 + offset * 25.0 + oy;
-            if y > h - 6.0 || y < g.hit_y + 48.0 {
+            let y = queue_top + offset * row_h + oy;
+            if y > h - 6.0 * k || y < g.hit_y + 48.0 * k {
                 continue;
             }
             let depth = (offset.max(0.0) / 1.6).clamp(0.0, 1.0);
-            let size = 44.0 - 22.0 * depth;
+            let size = (44.0 - 22.0 * depth) * k;
             // Completed words fade out as they slide above the current slot
             let row_alpha = if offset < 0.0 { (1.0 + offset).max(0.0) } else { 1.0 - 0.72 * depth };
             if row_alpha <= 0.01 {
@@ -1137,7 +1229,7 @@ impl Play {
             let ws = self.word_starts[wi];
             let we = self.word_starts.get(wi + 1).copied().unwrap_or(self.notes.len());
             let letter_states = &self.notes[ws.min(we)..we];
-            let gap = 6.0 - 2.5 * depth;
+            let gap = (6.0 - 2.5 * depth) * k;
             let total_w: f32 = word.chars().map(|c| msize(&c.to_string(), size).width + gap).sum();
             let mut x = g.left + g.width / 2.0 - total_w / 2.0 + ox;
             for (i, c) in word.chars().enumerate() {
@@ -1158,7 +1250,8 @@ impl Play {
                 let w = msize(&s, size).width;
                 if up_next {
                     // Soft accent underline marks where to re-anchor
-                    draw_line(x, y + 7.0, x + w, y + 7.0, 2.0, wa(th().accent, 0.7 * row_alpha));
+                    let uy = y + 7.0 * k;
+                    draw_line(x, uy, x + w, uy, 2.0 * k, wa(th().accent, 0.7 * row_alpha));
                 }
                 x += w + gap;
             }
@@ -1169,13 +1262,20 @@ impl Play {
         // shrinks to fit the gutter so long titles never spill onto it.
         let lcx = g.left / 2.0;
         let rcx = g.left + g.width + (screen_width() - g.left - g.width) / 2.0;
-        let col_w = (g.left - 28.0).max(60.0);
+        let col_w = (g.left - 28.0 * k).max(60.0 * k);
         let sp_on = self.sp_active(now);
 
-        draw_fit("SCORE", lcx, 106.0, 15.0, col_w, Color::new(1.0, 1.0, 1.0, 0.35));
-        draw_fit(&format!("{}", self.score), lcx, 146.0, 42.0, col_w, WHITE);
+        draw_fit("SCORE", lcx, 106.0 * k, 15.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.35));
+        draw_fit(&format!("{}", self.score), lcx, 146.0 * k, 42.0 * k, col_w, WHITE);
         let mult_color = if sp_on { wa(th().accent, 1.0) } else { wa(th().accent, 0.9) };
-        draw_fit(&format!("x{}", self.multiplier(now)), lcx, 180.0, 24.0, col_w, mult_color);
+        draw_fit(
+            &format!("x{}", self.multiplier(now)),
+            lcx,
+            180.0 * k,
+            24.0 * k,
+            col_w,
+            mult_color,
+        );
 
         // Star power: gold wash while active, energy meter when banked
         if sp_on {
@@ -1183,10 +1283,10 @@ impl Play {
             draw_strike_line(&g, ox, oy, 4.0, wa(th().accent, 0.8));
         }
         if self.energy > 0.0 || sp_on {
-            let bar_w = col_w.min(170.0);
+            let bar_w = col_w.min(170.0 * k);
             let bx = lcx - bar_w / 2.0;
-            let by = 208.0;
-            draw_rectangle(bx, by, bar_w, 8.0, Color::new(1.0, 1.0, 1.0, 0.12));
+            let by = 208.0 * k;
+            draw_rectangle(bx, by, bar_w, 8.0 * k, Color::new(1.0, 1.0, 1.0, 0.12));
             let fill = if sp_on {
                 ((self.sp_until - now) / 16.0).clamp(0.0, 1.0) as f32
             } else {
@@ -1197,35 +1297,43 @@ impl Play {
             } else {
                 wa(th().accent, 0.45)
             };
-            draw_rectangle(bx, by, bar_w * fill, 8.0, c);
+            draw_rectangle(bx, by, bar_w * fill, 8.0 * k, c);
             if self.energy >= 0.5 && !sp_on {
-                draw_fit("SPACE: star power", lcx, by + 26.0, 16.0, col_w, wa(th().accent, 0.8));
+                draw_fit(
+                    "SPACE: star power",
+                    lcx,
+                    by + 26.0 * k,
+                    16.0 * k,
+                    col_w,
+                    wa(th().accent, 0.8),
+                );
             }
         }
 
-        draw_fit(&self.title, rcx, 106.0, 22.0, col_w, Color::new(1.0, 1.0, 1.0, 0.85));
-        draw_fit(&self.diff_name, rcx, 130.0, 16.0, col_w, Color::new(1.0, 1.0, 1.0, 0.45));
+        draw_fit(&self.title, rcx, 106.0 * k, 22.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.85));
+        draw_fit(&self.diff_name, rcx, 130.0 * k, 16.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.45));
         let acc_text = format!("{:.1} %", self.accuracy());
-        draw_fit(&acc_text, rcx, 174.0, 30.0, col_w, Color::new(1.0, 1.0, 1.0, 0.85));
+        draw_fit(&acc_text, rcx, 174.0 * k, 30.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.85));
 
         // Song completion, down in the right gutter instead of across the top
         let resolved = self.notes.iter().filter(|n| n.state != NoteState::Pending).count();
         let frac = resolved as f32 / self.notes.len().max(1) as f32;
-        let pw = col_w.min(170.0);
-        draw_rectangle(rcx - pw / 2.0, 204.0, pw, 4.0, Color::new(1.0, 1.0, 1.0, 0.12));
-        draw_rectangle(rcx - pw / 2.0, 204.0, pw * frac, 4.0, wa(th().secondary, 0.8));
+        let pw = col_w.min(170.0 * k);
+        let py = 204.0 * k;
+        draw_rectangle(rcx - pw / 2.0, py, pw, 4.0 * k, Color::new(1.0, 1.0, 1.0, 0.12));
+        draw_rectangle(rcx - pw / 2.0, py, pw * frac, 4.0 * k, wa(th().secondary, 0.8));
         let pct = format!("{:.0}%", frac * 100.0);
-        draw_fit(&pct, rcx, 228.0, 15.0, col_w, Color::new(1.0, 1.0, 1.0, 0.4));
+        draw_fit(&pct, rcx, 228.0 * k, 15.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.4));
 
         // Combo
         if self.combo >= 4 {
             let text = format!("{}", self.combo);
-            let size = 64.0 + (self.combo.min(60) as f32) * 0.4;
+            let size = (64.0 + (self.combo.min(60) as f32) * 0.4) * k;
             let dims = msize(&text, size);
             dtext(
                 &text,
                 g.left + g.width / 2.0 - dims.width / 2.0 + ox,
-                g.hit_y - 130.0 + oy,
+                g.hit_y - 130.0 * k + oy,
                 size,
                 Color::new(1.0, 1.0, 1.0, 0.16),
             );
@@ -1239,12 +1347,13 @@ impl Play {
             } else {
                 format!("{}", beats_left.ceil() as i64)
             };
-            let dims = msize(&text, 80.0);
+            let size = 80.0 * k;
+            let dims = msize(&text, size);
             dtext(
                 &text,
                 g.left + g.width / 2.0 - dims.width / 2.0,
                 h * 0.4,
-                80.0,
+                size,
                 Color::new(1.0, 1.0, 1.0, 0.5 + 0.5 * self.beat_flash),
             );
         }
