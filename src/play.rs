@@ -15,6 +15,13 @@ const PERFECT_WIN: f64 = 0.055;
 const GREAT_WIN: f64 = 0.110;
 const GOOD_WIN: f64 = 0.170;
 
+// Negative feedback (miss sound + screen shake) is rate-limited: once it
+// fires, it stays quiet for `MISS_FB_COOLDOWN` so a streak of misses doesn't
+// turn into a wall of noise and thrashing. The miss still registers on screen
+// (the floating "MISS"/"X", the lead ducking) — only the punchy sound and
+// shake are gated. Purely cosmetic: scoring/judging is untouched.
+const MISS_FB_COOLDOWN: f64 = 0.45;
+
 // The lower-left gutter guitarist, benched until his art gets another pass.
 // All of his logic still runs and draws when flipped back on.
 const GUITARIST: bool = false;
@@ -216,6 +223,7 @@ pub struct Play {
     particles: Vec<Particle>,
     floaters: Vec<Floater>,
     shake: f32,
+    last_miss_fb: f64, // judge-clock time of the last miss/stray feedback, for the cooldown
     beat_flash: f32,
     first_note_time: f64,
     end_time: f64,
@@ -537,6 +545,7 @@ impl Play {
             particles: Vec::new(),
             floaters: Vec::new(),
             shake: 0.0,
+            last_miss_fb: f64::NEG_INFINITY,
             beat_flash: 0.0,
             first_note_time,
             end_time,
@@ -545,6 +554,18 @@ impl Play {
 
     fn sp_active(&self, now: f64) -> bool {
         now < self.sp_until
+    }
+
+    /// Whether the punchy miss/stray feedback (sound + shake) should fire at
+    /// judge-clock time `at`. Returns true and re-arms the cooldown only if at
+    /// least `MISS_FB_COOLDOWN` has passed since it last fired, so a run of
+    /// misses gets one thump rather than a stream of them.
+    fn miss_feedback(&mut self, at: f64) -> bool {
+        if at - self.last_miss_fb < MISS_FB_COOLDOWN {
+            return false;
+        }
+        self.last_miss_fb = at;
+        true
     }
 
     /// Skip the cursor past notes that can never change state again.
@@ -715,10 +736,12 @@ impl Play {
                 self.strays += 1;
                 self.combo = 0;
                 self.jam = self.jam.min(0.35);
-                self.shake = self.shake.max(3.0 * g.k);
                 let xpos = vec2(g.left + g.width / 2.0, g.hit_y - 40.0 * g.k);
                 self.float_text("X", xpos, th().miss, 24.0);
-                engine.play(&snd.miss, 0.18);
+                if self.miss_feedback(now) {
+                    self.shake = self.shake.max(3.0 * g.k);
+                    engine.play(&snd.miss, 0.18);
+                }
             }
         }
     }
@@ -750,13 +773,15 @@ impl Play {
         for i in missed {
             self.miss += 1;
             self.combo = 0;
-            self.shake = self.shake.max(7.0 * g.k);
+            if self.miss_feedback(jnow) {
+                self.shake = self.shake.max(7.0 * g.k);
+                engine.play(&snd.miss, 0.35);
+            }
             if let Some(p) = self.notes[i].sp_phrase {
                 self.sp_phrases[p as usize].broken = true;
             }
             let x = g.left + g.lane_w * (self.notes[i].lane as f32 + 0.5);
             self.float_text("MISS", vec2(x, g.hit_y - 64.0 * g.k), wa(th().miss, 1.0), 26.0);
-            engine.play(&snd.miss, 0.35);
             // Fumbling the line makes the lead drop out of the mix
             if !self.ducked {
                 engine.set_lead_gain(0.12);
