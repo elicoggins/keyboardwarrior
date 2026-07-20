@@ -15,6 +15,7 @@ mod chart;
 mod chorus;
 #[cfg(not(target_arch = "wasm32"))]
 mod config;
+mod controls;
 mod decode;
 mod gfx;
 mod play;
@@ -27,16 +28,24 @@ mod words;
 
 use audio::{make_sounds, AudioEngine, Buf};
 use chart::{SongChart, SongSource, DIFF_NAMES};
-use gfx::{
-    draw_centered, draw_fit, draw_frame_graph, dtext, msize, prewarm_glyphs, ui, FRAME_LOG_LEN,
-};
+use controls::{draw_inline_cap, draw_rule, draw_strip, Cap, Item, Style};
+use gfx::{draw_centered, draw_frame_graph, dtext, msize, prewarm_glyphs, ui, FRAME_LOG_LEN};
 use play::{is_typeable, lane_of, Judgement, Play, Results, SongRef};
 use settings::{
-    calib_offset, cycle, flip, settings_rows, sustains_on, SettingRow, CALIB_MS, CALIB_PERIOD,
-    SPEEDS, SPEED_IDX, SUSTAINS,
+    calib_offset, cycle, settings_lines, settings_rows, SettingLine, SettingRow, CALIB_MS,
+    CALIB_PERIOD, SPEEDS, SPEED_IDX,
 };
 use theme::{th, wa, THEMES, THEME_IDX};
 use words::{TEXT_MODES, TEXT_MODE_IDX};
+
+/// Side margin every footer strip and rule is inset by, so nothing on a
+/// screen's bottom edge ever runs into the window frame.
+const FOOTER_INSET: f32 = 40.0;
+
+/// Total height the menu's footer block claims — legend, scoring line, rule,
+/// status strip, hint strip and the bottom margin. The song wheel treats this
+/// as its floor, so the two can never overlap however short the window gets.
+const FOOTER_H: f32 = 258.0;
 
 /// Mini keyboard legend drawn in the menu: every key tinted by its lane, so
 /// the lane-to-hand mapping is shown, not spelled out.
@@ -543,10 +552,6 @@ async fn main() {
                     cycle(&THEME_IDX, THEMES.len(), 1);
                     engine.play(&sounds.kick, 0.4);
                 }
-                if is_key_pressed(KeyCode::S) {
-                    flip(&SUSTAINS);
-                    engine.play(&sounds.kick, 0.4);
-                }
                 if is_key_pressed(KeyCode::V) {
                     cycle(&SPEED_IDX, SPEEDS.len(), 1);
                     engine.play(&sounds.kick, 0.4);
@@ -563,7 +568,7 @@ async fn main() {
                     next_frame().await;
                     continue;
                 }
-                if is_key_pressed(KeyCode::O) {
+                if is_key_pressed(KeyCode::S) {
                     engine.play(&sounds.kick, 0.4);
                     scene = Scene::Settings { sel: 0, menu_sel: *sel };
                     next_frame().await;
@@ -726,7 +731,7 @@ async fn main() {
                 // Scaling the chrome instead means it can never claim more than
                 // its share, and since the row pitch scales with it the wheel
                 // shows a near-constant ~6-7 songs at any height.
-                let hint_top = screen_height() - (130.0 + 122.0) * k; // legend top
+                let hint_top = screen_height() - FOOTER_H * k; // top of the legend
                 let band_top = 222.0 * k;
                 let spacing = 46.0 * k;
                 // `ui()` stops shrinking at its floor, so a window small enough
@@ -818,8 +823,16 @@ async fn main() {
                     }
                 }
 
-                let hint_y = screen_height() - 130.0 * k;
-                draw_keyboard_legend(screen_width() / 2.0, hint_y - 122.0 * k);
+                // Footer, laid out from the bottom edge up: teach (legend and
+                // the scoring line), then state, then controls. One rule
+                // divides what the game does from what the player presses.
+                let (stat_s, hint_s) = (Style::stat(k), Style::hint(k));
+                let avail = screen_width() - FOOTER_INSET * 2.0 * k;
+                let hint_cy = screen_height() - 30.0 * k - hint_s.height() / 2.0;
+                let stat_cy = hint_cy - hint_s.height() / 2.0 - 22.0 * k - stat_s.height() / 2.0;
+                let rule_y = stat_cy - stat_s.height() / 2.0 - 20.0 * k;
+                let teach_y = rule_y - 24.0 * k;
+                draw_keyboard_legend(screen_width() / 2.0, teach_y - 122.0 * k);
                 draw_centered(
                     // The browser demo has no whammy bar (real app only)
                     if cfg!(target_arch = "wasm32") {
@@ -827,42 +840,52 @@ async fn main() {
                     } else {
                         "gold gems build star power  ·  SPACE unleashes it  ·  SHIFT for whammy bar"
                     },
-                    hint_y + 28.0 * k,
+                    teach_y,
                     20.0 * k,
                     wa(th().accent, 0.45),
                 );
+                draw_rule(rule_y, FOOTER_INSET * k, k);
+
                 let mode_name =
                     TEXT_MODES[TEXT_MODE_IDX.load(Ordering::Relaxed) % TEXT_MODES.len()].1;
-                let sus = if sustains_on() { "ON" } else { "OFF" };
                 let off_ms = CALIB_MS.load(Ordering::Relaxed);
                 let speed = SPEEDS[SPEED_IDX.load(Ordering::Relaxed) % SPEEDS.len()].0;
-                draw_fit(
-                    &format!(
-                        "M · text: {}   ·   T · theme: {}   ·   S · sustains: {}   ·   V · speed: {}   ·   C · calibrate ({off_ms:+} ms)   ·   -/+ · volume: {:.0}%",
-                        mode_name,
-                        th().name,
-                        sus,
-                        speed,
-                        engine.master() * 100.0
+                // The menu hotkeys, each shown with what it currently reads —
+                // the same rows the settings screen carries, so a regular
+                // never has to leave the menu to check or change them.
+                let stats = [
+                    Item::stat(Cap::Txt("M"), "TEXT", mode_name),
+                    Item::stat(Cap::Txt("V"), "SPEED", speed),
+                    Item::stat(Cap::Txt("T"), "THEME", th().name),
+                    Item::stat(Cap::Txt("C"), "OFFSET", format!("{off_ms:+} ms")),
+                    Item::stat(
+                        Cap::Pair("-", "+"),
+                        "VOLUME",
+                        format!("{:.0}%", engine.master() * 100.0),
                     ),
-                    screen_width() / 2.0,
-                    hint_y + 56.0 * k,
-                    20.0 * k,
-                    screen_width() - 32.0 * k,
-                    wa(th().secondary, 0.7),
-                );
-                draw_centered(
-                    // The library keys (add/open/rescan/get) are native only —
-                    // the browser demo ships a fixed library.
-                    if cfg!(target_arch = "wasm32") {
-                        "up/down: song   ·   left/right: difficulty   ·   enter: play   ·   O: all settings"
-                    } else {
-                        "up/down: song · left/right: difficulty · enter: play · O: settings · A: add folder · F: open songs · R: rescan · G: get songs · del: remove"
-                    },
-                    hint_y + 84.0 * k,
-                    18.0 * k,
-                    Color::new(1.0, 1.0, 1.0, 0.3),
-                );
+                ];
+                draw_strip(&[&stats], stat_cy, avail, stat_s);
+
+                // Arrow-key navigation isn't listed anywhere: the wheel and the
+                // difficulty row both show their own selection, and arrows on a
+                // list need no teaching.
+                let play =
+                    [Item::act(Cap::Txt("ENTER"), "play"), Item::act(Cap::Txt("S"), "settings")];
+                // Library management is native only — the browser demo ships a
+                // fixed library — and is the cluster a narrow window drops,
+                // since every one of these is also reachable from settings.
+                #[cfg(not(target_arch = "wasm32"))]
+                let library = [
+                    Item::act(Cap::Txt("A"), "add folder"),
+                    Item::act(Cap::Txt("F"), "open folder"),
+                    Item::act(Cap::Txt("R"), "rescan"),
+                    Item::act(Cap::Txt("G"), "download"),
+                    Item::act(Cap::Txt("DEL"), "remove"),
+                ];
+                #[cfg(not(target_arch = "wasm32"))]
+                draw_strip(&[&play, &library], hint_cy, avail, hint_s);
+                #[cfg(target_arch = "wasm32")]
+                draw_strip(&[&play], hint_cy, avail, hint_s);
             }
 
             Scene::Settings { sel, menu_sel } => {
@@ -918,51 +941,157 @@ async fn main() {
                 let t = get_time();
                 let pulse = ((t * 2.0).sin() * 0.5 + 0.5) as f32;
                 draw_centered("SETTINGS", 130.0 * k, 56.0 * k, Color::new(1.0, 1.0, 1.0, 0.95));
-                let cx = screen_width() / 2.0;
-                let top = 210.0 * k;
-                let spacing = 40.0 * k;
-                for (i, r) in rows.iter().enumerate() {
-                    let y = top + i as f32 * spacing;
-                    let selected = i == *sel;
-                    let indent = if r.indented() { 26.0 * k } else { 0.0 };
-                    let size = 22.0 * k;
-                    let label_a = if selected {
-                        0.95
-                    } else if r.indented() {
-                        0.42
-                    } else {
-                        0.60
-                    };
-                    let ld = msize(r.label(), size);
-                    let lx = cx - 44.0 * k - ld.width + indent;
-                    dtext(r.label(), lx, y, size, Color::new(1.0, 1.0, 1.0, label_a));
-                    if selected {
-                        dtext(
-                            ">",
-                            lx - 30.0 * k,
-                            y,
-                            size,
-                            Color::new(1.0, 1.0, 1.0, 0.5 + 0.5 * pulse),
-                        );
-                    }
-                    let v = r.value(&engine);
-                    if selected {
-                        dtext(&format!("< {} >", v), cx + 44.0 * k, y, size, wa(th().accent, 0.95));
-                    } else {
-                        dtext(&v, cx + 60.0 * k, y, size, wa(th().secondary, 0.55));
+
+                // The list is a two-column form on a fixed axis: labels flush
+                // right of it, values flush left. Both columns stay put as
+                // values change, so nothing on screen shifts while you hold a
+                // key down cycling one.
+                let axis = screen_width() / 2.0;
+                let lines = settings_lines();
+                let hint_s = Style::hint(k);
+                let cap_s = Style::stat(k);
+                // The footer is fixed; the list gets what's left, and its
+                // pitch shrinks to fit rather than running underneath. Turning
+                // PRACTICE on adds six rows, which is exactly when a short
+                // window would otherwise overflow.
+                let list_top = 200.0 * k;
+                let list_bot = screen_height() - (30.0 + 26.0) * k - hint_s.height();
+                let region = (list_bot - list_top).max(160.0 * k);
+                // Row pitch in "units": a row claims one, a section heading
+                // 1.25 with its air. The pitch shrinks to fit rather than the
+                // list running under the footer — turning PRACTICE on adds six
+                // rows, which is exactly when a short window would overflow.
+                let secs = (lines.len() - rows.len()) as f32;
+                let units = rows.len() as f32 + secs * 1.25;
+                let desc_gap = 44.0 * k;
+                let unit = ((region - desc_gap - 18.0 * k) / units).clamp(20.0 * k, 40.0 * k);
+                let size = (unit * 0.55).min(22.0 * k);
+                // List and description are centered in the region as one
+                // block, so neither strands a hole when PRACTICE collapses.
+                let block_h = units * unit;
+                let top = list_top + ((region - (block_h + desc_gap + 18.0 * k)) / 2.0).max(0.0);
+                // Shortcut column. Left-aligned and fixed, so the caps read as
+                // a column rather than a ragged tail, and parked clear of the
+                // longest value any row can show — `WORDS (FIXED)` — plus the
+                // chevron drawn past it, so it can never collide or drift as
+                // values change under it.
+                let cap_col = axis + 232.0 * k;
+
+                let mut y = top;
+                for line in &lines {
+                    match line {
+                        SettingLine::Section(name) => {
+                            // Headings hang left of the label column so they
+                            // bracket the group without joining the form.
+                            y += unit * 0.55;
+                            let d = msize(name, 13.0 * k);
+                            dtext(
+                                name,
+                                axis - 44.0 * k - d.width,
+                                y,
+                                13.0 * k,
+                                wa(th().secondary, 0.5),
+                            );
+                            y += unit * 0.7;
+                        }
+                        SettingLine::Row(r) => {
+                            let i = rows.iter().position(|x| x == r).unwrap_or(0);
+                            let selected = i == *sel;
+                            // Labels are right-aligned, so nesting has to
+                            // mirror: a child steps *away* from the value
+                            // column, not toward it. Shifting right would put
+                            // the children closer to their values than their
+                            // own parent, which reads as promotion.
+                            let indent = if r.indented() { -24.0 * k } else { 0.0 };
+                            let label_a = if selected {
+                                0.95
+                            } else if r.indented() {
+                                0.42
+                            } else {
+                                0.62
+                            };
+                            let ld = msize(r.label(), size);
+                            let lx = axis - 44.0 * k - ld.width + indent;
+                            dtext(r.label(), lx, y, size, Color::new(1.0, 1.0, 1.0, label_a));
+                            if selected {
+                                dtext(
+                                    ">",
+                                    lx - 28.0 * k,
+                                    y,
+                                    size,
+                                    Color::new(1.0, 1.0, 1.0, 0.5 + 0.5 * pulse),
+                                );
+                            }
+                            // Value column. Toggles carry their state in the
+                            // color as well as the word, so a glance down the
+                            // column reads as a pattern of lit and unlit.
+                            let v = r.value(&engine);
+                            let vc = match (selected, r.toggle()) {
+                                (true, _) => wa(th().accent, 0.95),
+                                (false, Some(true)) => wa(th().accent, 0.6),
+                                (false, Some(false)) => Color::new(1.0, 1.0, 1.0, 0.28),
+                                (false, None) => wa(th().secondary, 0.55),
+                            };
+                            let vx = axis + 44.0 * k;
+                            if selected {
+                                // Chevrons sit outside the value so the value
+                                // itself keeps the column's left edge.
+                                let cd = msize("<", size);
+                                dtext(
+                                    "<",
+                                    vx - cd.width - 10.0 * k,
+                                    y,
+                                    size,
+                                    wa(th().accent, 0.45 + 0.35 * pulse),
+                                );
+                                dtext(&v, vx, y, size, vc);
+                                let vd = msize(&v, size);
+                                dtext(
+                                    ">",
+                                    vx + vd.width + 10.0 * k,
+                                    y,
+                                    size,
+                                    wa(th().accent, 0.45 + 0.35 * pulse),
+                                );
+                            } else {
+                                dtext(&v, vx, y, size, vc);
+                            }
+                            // The menu shortcut, in its own column past the
+                            // values — present for whoever wants it, quiet
+                            // enough to ignore while reading the form.
+                            if let Some(cap) = r.hotkey() {
+                                draw_inline_cap(
+                                    cap,
+                                    cap_col,
+                                    y - msize("M", size).height / 2.0,
+                                    cap_s,
+                                );
+                            }
+                            y += unit;
+                        }
                     }
                 }
-                draw_centered(
-                    row.desc(),
-                    top + rows.len() as f32 * spacing + 34.0 * k,
-                    17.0 * k,
-                    wa(th().secondary, 0.7),
-                );
-                draw_centered(
-                    "up/down: select   ·   left/right: change   ·   esc: back",
-                    screen_height() - 60.0 * k,
-                    18.0 * k,
-                    Color::new(1.0, 1.0, 1.0, 0.3),
+
+                // What the selected row does, sitting a fixed gap under the
+                // list so it reads as the list's caption rather than as
+                // footer chrome.
+                draw_centered(row.desc(), y + desc_gap, 17.0 * k, wa(th().secondary, 0.75));
+                // No arrow hints: the selected row's own `< value >` chevrons
+                // say which way it moves, and stepping a list is self-evident.
+                //
+                // ENTER means different things per row — it nudges a value
+                // forward, but on `calibrate` it opens the metronome — so the
+                // hint names whichever one is actually under the cursor.
+                let nav = [Item::act(
+                    Cap::Txt("ENTER"),
+                    if row == SettingRow::Calibrate { "calibrate" } else { "change" },
+                )];
+                let back = [Item::act(Cap::Txt("ESC"), "back")];
+                draw_strip(
+                    &[&nav, &back],
+                    screen_height() - 30.0 * k - hint_s.height() / 2.0,
+                    screen_width() - FOOTER_INSET * 2.0 * k,
+                    hint_s,
                 );
             }
 
@@ -1001,11 +1130,15 @@ async fn main() {
                         72.0 * k,
                         Color::new(1.0, 1.0, 1.0, 0.95),
                     );
-                    draw_centered(
-                        "esc: resume   ·   q: quit to menu",
-                        screen_height() * 0.42 + 44.0 * k,
-                        22.0 * k,
-                        Color::new(1.0, 1.0, 1.0, 0.55),
+                    let s = Style::hint(k);
+                    draw_strip(
+                        &[&[
+                            Item::act(Cap::Txt("ESC"), "resume"),
+                            Item::act(Cap::Txt("Q"), "quit to menu"),
+                        ]],
+                        screen_height() * 0.42 + 40.0 * k,
+                        screen_width() - FOOTER_INSET * 2.0 * k,
+                        s,
                     );
                     next_frame().await;
                     continue;
@@ -1090,11 +1223,15 @@ async fn main() {
                     draw_centered(&text, y, 26.0 * k, *color);
                 }
 
-                draw_centered(
-                    "R to play again   ·   enter for menu",
-                    680.0 * k,
-                    20.0 * k,
-                    Color::new(1.0, 1.0, 1.0, 0.4),
+                let s = Style::hint(k);
+                draw_strip(
+                    &[&[
+                        Item::act(Cap::Txt("R"), "play again"),
+                        Item::act(Cap::Txt("ENTER"), "menu"),
+                    ]],
+                    screen_height() - 30.0 * k - s.height() / 2.0,
+                    screen_width() - FOOTER_INSET * 2.0 * k,
+                    s,
                 );
             }
 
@@ -1278,16 +1415,33 @@ async fn main() {
                         wa(th().accent, 0.9),
                     );
                 }
-                draw_centered(
-                    if ready {
-                        "enter: apply   ·   esc: cancel"
-                    } else {
-                        "tap along with at least 4 ticks   ·   esc: cancel"
-                    },
-                    screen_height() - 80.0 * k,
-                    20.0 * k,
-                    Color::new(1.0, 1.0, 1.0, 0.45),
-                );
+                // ENTER only appears once it does something — an apply key
+                // that's dead for the first four taps teaches the wrong thing.
+                //
+                // Counted off the tap list as it stands *now*, not off `ready`
+                // above: taps are pushed after that was read, so a frame that
+                // lands two at once would otherwise underflow the countdown
+                // and show the footer a state late.
+                let s = Style::hint(k);
+                let left = 4usize.saturating_sub(cal.taps.len());
+                if left > 0 {
+                    let tick = if left == 1 { "tick" } else { "ticks" };
+                    draw_centered(
+                        &format!("tap along with {left} more {tick}"),
+                        screen_height() - 62.0 * k - s.height(),
+                        18.0 * k,
+                        wa(th().secondary, 0.7),
+                    );
+                }
+                let apply = [Item::act(Cap::Txt("ENTER"), "apply")];
+                let cancel = [Item::act(Cap::Txt("ESC"), "cancel")];
+                let cy = screen_height() - 30.0 * k - s.height() / 2.0;
+                let avail = screen_width() - FOOTER_INSET * 2.0 * k;
+                if left == 0 {
+                    draw_strip(&[&apply, &cancel], cy, avail, s);
+                } else {
+                    draw_strip(&[&cancel], cy, avail, s);
+                }
             }
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -1610,21 +1764,34 @@ async fn main() {
                     );
                 }
 
-                let hint = if !cs.busy.is_empty() {
-                    "working...  ·  esc: back"
-                } else if cs.hits.is_empty() {
-                    "type a query  ·  enter: search  ·  left/right: difficulty  ·  esc: back"
-                } else if cs.focus == ChorusFocus::Search {
-                    "enter: search  ·  left/right: difficulty  ·  down/tab: browse results  ·  esc: back"
+                // The footer tracks focus: whichever half of the screen has the
+                // keyboard is the half whose keys get listed first.
+                let s = Style::hint(k);
+                let searching = cs.focus == ChorusFocus::Search;
+                let primary: Vec<Item> = if cs.busy.is_empty() && !searching {
+                    vec![
+                        Item::act(Cap::Txt("ENTER"), "download"),
+                        Item::act(Cap::Txt("TAB"), "edit search"),
+                    ]
+                } else if cs.busy.is_empty() {
+                    let mut v = vec![Item::act(Cap::Txt("ENTER"), "search")];
+                    if !cs.hits.is_empty() {
+                        v.push(Item::act(Cap::Txt("TAB"), "browse results"));
+                    }
+                    v
                 } else {
-                    "up/down: pick  ·  left/right: difficulty  ·  enter: download  ·  tab: edit search  ·  esc: back"
+                    Vec::new()
                 };
-                draw_centered(
-                    hint,
-                    screen_height() - 56.0 * k,
-                    18.0 * k,
-                    Color::new(1.0, 1.0, 1.0, 0.4),
-                );
+                // The difficulty filter isn't listed: it carries its own
+                // `< >` affordance inline, right under the search box.
+                let back = [Item::act(Cap::Txt("ESC"), "back")];
+                let cy = screen_height() - 30.0 * k - s.height() / 2.0;
+                let avail = screen_width() - FOOTER_INSET * 2.0 * k;
+                if primary.is_empty() {
+                    draw_strip(&[&back], cy, avail, s);
+                } else {
+                    draw_strip(&[&primary, &back], cy, avail, s);
+                }
             }
         }
 

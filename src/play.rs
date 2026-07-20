@@ -6,7 +6,7 @@ use macroquad::prelude::*;
 use crate::audio::{self, AudioEngine, Buf, Sounds};
 use crate::chart::{SongChart, DIFF_NAMES};
 use crate::gfx::{draw_fit, dtext, msize, ui};
-use crate::settings::{approach, sustains_on};
+use crate::settings::approach;
 use crate::theme::{mix, th, wa};
 use crate::words::{chart_seed, generate_text, text_mode, TextMode};
 
@@ -391,14 +391,10 @@ impl Play {
         let group_lens: Vec<usize> = merged.iter().map(|g| g.len()).collect();
         let mut flat_times: Vec<(f64, f64)> = merged.concat();
         // Sustains: only tails long enough to be worth holding, clipped so
-        // they never overlap the next note's press; drop them entirely when
-        // the option is off
+        // they never overlap the next note's press
         for i in 0..flat_times.len() {
             let next_t = flat_times.get(i + 1).map(|n| n.0);
             let (t, mut len) = flat_times[i];
-            if !sustains_on() {
-                len = 0.0;
-            }
             if let Some(nt) = next_t {
                 len = len.min(nt - t - 0.12);
             }

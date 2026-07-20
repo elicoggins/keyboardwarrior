@@ -4,6 +4,7 @@
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use crate::audio::AudioEngine;
+use crate::controls::Cap;
 use crate::theme::{th, THEMES, THEME_IDX};
 use crate::words::{
     text_mode, TextMode, PRAC_BOTTOM, PRAC_HOME, PRAC_LEFT, PRAC_PUNCT, PRAC_RIGHT, PRAC_TOP,
@@ -30,12 +31,6 @@ pub fn calib_offset() -> f64 {
     CALIB_MS.load(Ordering::Relaxed) as f64 / 1000.0
 }
 
-pub static SUSTAINS: AtomicBool = AtomicBool::new(true);
-
-pub fn sustains_on() -> bool {
-    SUSTAINS.load(Ordering::Relaxed)
-}
-
 /// One adjustable row on the settings screen.
 #[derive(Clone, Copy, PartialEq)]
 pub enum SettingRow {
@@ -47,34 +42,62 @@ pub enum SettingRow {
     PracBottom,
     PracPunct,
     Theme,
-    Sustains,
     Speed,
     Volume,
     Calibrate,
 }
 
-/// The rows currently on screen: the practice key filters only appear while
-/// the text mode is PRACTICE, indented under it.
-pub fn settings_rows() -> Vec<SettingRow> {
-    let mut rows = vec![SettingRow::TextMode];
+/// One line of the settings screen: a section heading, or a row that adjusts
+/// something. Headings are skipped by the cursor — `settings_rows` returns
+/// only what's selectable, `settings_lines` returns what's drawn.
+#[derive(Clone, Copy, PartialEq)]
+pub enum SettingLine {
+    Section(&'static str),
+    Row(SettingRow),
+}
+
+/// Everything the settings screen draws, in order.
+///
+/// Grouped by what a player is actually trying to change, using the game's own
+/// vocabulary: what the notes say, how the highway behaves, and how it sounds
+/// and lines up. The practice key filters only appear while the text mode is
+/// PRACTICE, indented under it.
+pub fn settings_lines() -> Vec<SettingLine> {
+    use SettingLine::{Row, Section};
+    let mut lines = vec![Section("CONTENT"), Row(SettingRow::TextMode)];
     if text_mode() == TextMode::Practice {
-        rows.extend([
-            SettingRow::PracLeft,
-            SettingRow::PracRight,
-            SettingRow::PracTop,
-            SettingRow::PracHome,
-            SettingRow::PracBottom,
-            SettingRow::PracPunct,
-        ]);
+        lines.extend(
+            [
+                SettingRow::PracLeft,
+                SettingRow::PracRight,
+                SettingRow::PracTop,
+                SettingRow::PracHome,
+                SettingRow::PracBottom,
+                SettingRow::PracPunct,
+            ]
+            .map(Row),
+        );
     }
-    rows.extend([
-        SettingRow::Theme,
-        SettingRow::Sustains,
-        SettingRow::Speed,
-        SettingRow::Volume,
-        SettingRow::Calibrate,
+    lines.extend([
+        Section("HIGHWAY"),
+        Row(SettingRow::Speed),
+        Row(SettingRow::Theme),
+        Section("AUDIO & TIMING"),
+        Row(SettingRow::Volume),
+        Row(SettingRow::Calibrate),
     ]);
-    rows
+    lines
+}
+
+/// Just the selectable rows, in screen order.
+pub fn settings_rows() -> Vec<SettingRow> {
+    settings_lines()
+        .into_iter()
+        .filter_map(|l| match l {
+            SettingLine::Row(r) => Some(r),
+            SettingLine::Section(_) => None,
+        })
+        .collect()
 }
 
 pub fn cycle(idx: &AtomicUsize, n: usize, dir: i32) {
@@ -105,11 +128,39 @@ impl SettingRow {
             SettingRow::PracBottom => "bottom row",
             SettingRow::PracPunct => "punctuation",
             SettingRow::Theme => "theme",
-            SettingRow::Sustains => "sustains",
             SettingRow::Speed => "speed",
             SettingRow::Volume => "volume",
             SettingRow::Calibrate => "calibrate",
         }
+    }
+
+    /// The menu shortcut that changes this row without opening settings, if
+    /// it has one. Drawn beside the row, so the two surfaces teach each other:
+    /// whoever finds a setting here also learns the key that skips the trip.
+    pub fn hotkey(self) -> Option<Cap> {
+        match self {
+            SettingRow::TextMode => Some(Cap::Txt("M")),
+            SettingRow::Theme => Some(Cap::Txt("T")),
+            SettingRow::Speed => Some(Cap::Txt("V")),
+            SettingRow::Calibrate => Some(Cap::Txt("C")),
+            SettingRow::Volume => Some(Cap::Pair("-", "+")),
+            _ => None,
+        }
+    }
+
+    /// Whether this row is an on/off toggle and which way it's set, so a
+    /// state can be read off its color without parsing the word.
+    pub fn toggle(self) -> Option<bool> {
+        let b = match self {
+            SettingRow::PracLeft => &PRAC_LEFT,
+            SettingRow::PracRight => &PRAC_RIGHT,
+            SettingRow::PracTop => &PRAC_TOP,
+            SettingRow::PracHome => &PRAC_HOME,
+            SettingRow::PracBottom => &PRAC_BOTTOM,
+            SettingRow::PracPunct => &PRAC_PUNCT,
+            _ => return None,
+        };
+        Some(b.load(Ordering::Relaxed))
     }
 
     pub fn indented(self) -> bool {
@@ -136,7 +187,6 @@ impl SettingRow {
             SettingRow::PracBottom => on_off(&PRAC_BOTTOM).into(),
             SettingRow::PracPunct => on_off(&PRAC_PUNCT).into(),
             SettingRow::Theme => th().name.to_string(),
-            SettingRow::Sustains => on_off(&SUSTAINS).into(),
             SettingRow::Speed => {
                 SPEEDS[SPEED_IDX.load(Ordering::Relaxed) % SPEEDS.len()].0.to_string()
             }
@@ -155,7 +205,6 @@ impl SettingRow {
             SettingRow::PracBottom => flip(&PRAC_BOTTOM),
             SettingRow::PracPunct => flip(&PRAC_PUNCT),
             SettingRow::Theme => cycle(&THEME_IDX, THEMES.len(), dir),
-            SettingRow::Sustains => flip(&SUSTAINS),
             SettingRow::Speed => cycle(&SPEED_IDX, SPEEDS.len(), dir),
             SettingRow::Volume => {
                 engine.set_master(((engine.master() + 0.05 * dir as f32) * 20.0).round() / 20.0);
@@ -180,7 +229,6 @@ impl SettingRow {
             SettingRow::PracBottom => "the zxcv row",
             SettingRow::PracPunct => "comma, period, apostrophe - shift is never needed",
             SettingRow::Theme => "lane and accent colors",
-            SettingRow::Sustains => "hold long notes for bonus score",
             SettingRow::Speed => "how long notes stay on the highway",
             SettingRow::Volume => "master volume - also -/+ from anywhere",
             SettingRow::Calibrate => "ENTER: tap along to measure your keyboard latency",
