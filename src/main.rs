@@ -167,6 +167,13 @@ fn step_selection(
     Some(view[cur])
 }
 
+/// The menu's difficulty-selector position for a song's played difficulty.
+/// Returning from a run lands on the difficulty just played — where its best
+/// score is shown — instead of snapping back to the easiest.
+fn diff_pos(songs: &[chart::SongEntry], song: usize, diff: usize) -> usize {
+    songs.get(song).and_then(|s| s.available.iter().position(|&d| d == diff)).unwrap_or(0)
+}
+
 /// Whether keystrokes edit the query or navigate the results list.
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(PartialEq, Clone, Copy)]
@@ -455,6 +462,16 @@ async fn main() {
     // folders (from the config file / KW_SONG_DIRS) are added on top.
     #[cfg(not(target_arch = "wasm32"))]
     let mut config = config::Config::load();
+    // Restore persisted settings (theme, speed, text mode, calibration,
+    // volume) before the first frame paints, then keep a snapshot so any later
+    // change is written straight back out.
+    #[cfg(not(target_arch = "wasm32"))]
+    config::load_settings(&engine);
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut last_settings = config::settings_snapshot(&engine);
+    // Persisted personal-best scores, surfaced on the menu and results screens.
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut scores = config::Scores::load();
     #[cfg(not(target_arch = "wasm32"))]
     let song_roots = |cfg: &config::Config| -> Vec<std::path::PathBuf> {
         let mut roots = vec![std::path::PathBuf::from("songs")];
@@ -969,6 +986,46 @@ async fn main() {
                             );
                         }
                     }
+                    // Personal best for the highlighted difficulty, set into the
+                    // right margin beside the title so it never crowds the wheel
+                    // rows (which are packed too tight for a fourth detail line).
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if selected && focus > 0.5 {
+                        if let Some(b) = diff_opts
+                            .get(*diff_sel)
+                            .and_then(|&(d, _)| scores.best(&song.title, &song.artist, d))
+                        {
+                            let bsize = 15.0 * k;
+                            let txt = format!("best {}  ·  {:.1}%", b.score, b.accuracy);
+                            let dims = msize(&txt, bsize);
+                            let pad = 5.0 * k;
+                            let bx = screen_width() - FOOTER_INSET * k - pad - dims.width;
+                            let title_right =
+                                screen_width() / 2.0 + msize(&song.title, size).width / 2.0;
+                            // Skip it if a long title would run into it.
+                            if bx > title_right + 24.0 * k {
+                                // A 100% (flawless) best turns gold and gets a
+                                // border; anything less stays a quiet subtitle.
+                                let perfect = b.accuracy >= 100.0;
+                                if perfect {
+                                    draw_rectangle_lines(
+                                        bx - pad,
+                                        y - dims.offset_y - pad,
+                                        dims.width + pad * 2.0,
+                                        dims.height + pad * 2.0,
+                                        2.0 * k,
+                                        wa(th().accent, 0.85 * a),
+                                    );
+                                }
+                                let col = if perfect {
+                                    wa(th().accent, a)
+                                } else {
+                                    wa(th().secondary, 0.6 * a)
+                                };
+                                dtext(&txt, bx, y, bsize, col);
+                            }
+                        }
+                    }
                 }
                 // Filter matched nothing — say so where the wheel would be.
                 if view.is_empty() {
@@ -1270,7 +1327,8 @@ async fn main() {
                         engine.set_paused(false);
                         engine.stop_timeline();
                         let sel = play.song_ref.song;
-                        scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
+                        let diff_sel = diff_pos(&songs, sel, play.song_ref.diff);
+                        scene = Scene::Menu { sel, diff_sel, scroll: sel as f32 };
                         next_frame().await;
                         continue;
                     }
@@ -1316,6 +1374,26 @@ async fn main() {
 
                 if play.finished(now) {
                     engine.stop_timeline();
+                    // Record the run and see whether it set a personal best.
+                    // Any new best is announced (a first clear included); the
+                    // banner just drops the "+delta" when there's nothing prior.
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let (new_best, prev_best) = {
+                        let artist = songs[play.song_ref.song].artist.clone();
+                        let rec = scores.record(
+                            &play.title,
+                            &artist,
+                            play.song_ref.diff,
+                            config::BestScore {
+                                score: play.score,
+                                accuracy: play.accuracy(),
+                                max_combo: play.max_combo,
+                            },
+                        );
+                        (rec.improved, rec.prev_best)
+                    };
+                    #[cfg(target_arch = "wasm32")]
+                    let (new_best, prev_best): (bool, Option<i64>) = (false, None);
                     scene = Scene::Results(Results {
                         song_ref: play.song_ref,
                         title: play.title.clone(),
@@ -1328,6 +1406,8 @@ async fn main() {
                         miss: play.miss,
                         strays: play.strays,
                         accuracy: play.accuracy(),
+                        new_best,
+                        prev_best,
                     });
                 }
             }
@@ -1335,7 +1415,8 @@ async fn main() {
             Scene::Results(r) => {
                 if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Escape) {
                     let sel = r.song_ref.song;
-                    scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
+                    let diff_sel = diff_pos(&songs, sel, r.song_ref.diff);
+                    scene = Scene::Menu { sel, diff_sel, scroll: sel as f32 };
                     next_frame().await;
                     continue;
                 }
@@ -1370,6 +1451,15 @@ async fn main() {
                     24.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.7),
                 );
+                // Personal-best banner: only when this run beat a prior score.
+                if r.new_best {
+                    let pulse = ((get_time() * 3.0).sin() * 0.5 + 0.5) as f32;
+                    let msg = match r.prev_best {
+                        Some(prev) => format!("NEW PERSONAL BEST!   +{}", r.score - prev),
+                        None => "NEW PERSONAL BEST!".to_string(),
+                    };
+                    draw_centered(&msg, 424.0 * k, 22.0 * k, wa(th().accent, 0.6 + 0.4 * pulse));
+                }
 
                 let rows = [
                     ("PERFECT", r.perfect, Judgement::Perfect.color()),
@@ -1973,6 +2063,17 @@ async fn main() {
         }
         if show_frame_graph {
             draw_frame_graph(&frame_log);
+        }
+        // Persist any settings change made this frame, from whichever scene.
+        // Cheap: the snapshot is a handful of scalars and a write only happens
+        // when something actually changed.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let snap = config::settings_snapshot(&engine);
+            if snap != last_settings {
+                config::save_settings(&snap);
+                last_settings = snap;
+            }
         }
         next_frame().await;
     }

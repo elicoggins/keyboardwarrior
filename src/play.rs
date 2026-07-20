@@ -1395,6 +1395,10 @@ pub struct Results {
     pub miss: u32,
     pub strays: u32,
     pub accuracy: f64,
+    // Whether this run beat a stored personal best (a first clear doesn't
+    // count), and the score it beat, for the results banner.
+    pub new_best: bool,
+    pub prev_best: Option<i64>,
 }
 
 impl Results {
