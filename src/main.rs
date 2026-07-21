@@ -99,6 +99,7 @@ struct Calibrate {
     scheduled_until: f64, // timeline time up to which ticks are queued
     menu_sel: usize,      // menu selection to restore on the way back out
     from_menu: bool,      // entered via the menu hotkey, not the settings row
+    off_ms: i64,          // working offset: tap median or hand-nudged, applied on ENTER
 }
 
 enum Scene {
@@ -667,6 +668,7 @@ async fn main() {
                         scheduled_until: 0.0,
                         menu_sel: *sel,
                         from_menu: true,
+                        off_ms: CALIB_MS.load(Ordering::Relaxed),
                     });
                     next_frame().await;
                     continue;
@@ -692,8 +694,10 @@ async fn main() {
                             songs = chart::scan_all(&song_roots(&config));
                             *sel = 0;
                             *scroll = 0.0;
-                            toast =
-                                Some(Toast::new(format!("added {shown} - {} songs total", songs.len())));
+                            toast = Some(Toast::new(format!(
+                                "added {shown} - {} songs total",
+                                songs.len()
+                            )));
                         } else {
                             toast = Some(Toast::new(format!("{shown} is already in your library")));
                         }
@@ -717,7 +721,8 @@ async fn main() {
                 // Delete: two presses on the same row remove the song from disk.
                 // (Suspended while searching, where Backspace erases the query.)
                 #[cfg(not(target_arch = "wasm32"))]
-                if !searching && (is_key_pressed(KeyCode::Delete) || is_key_pressed(KeyCode::Backspace))
+                if !searching
+                    && (is_key_pressed(KeyCode::Delete) || is_key_pressed(KeyCode::Backspace))
                 {
                     let row = *sel;
                     if chart::is_bundled(&songs[row].source) {
@@ -739,7 +744,9 @@ async fn main() {
                                 next_frame().await;
                                 continue;
                             }
-                            Err(e) => toast = Some(Toast::new(format!("couldn't delete {title}: {e}"))),
+                            Err(e) => {
+                                toast = Some(Toast::new(format!("couldn't delete {title}: {e}")))
+                            }
                         }
                         pending_delete = None;
                     } else {
@@ -822,7 +829,8 @@ async fn main() {
                     };
                     dtext(&shown, bx + 12.0 * k, by + 23.0 * k, 20.0 * k, col);
                     let n = view.len();
-                    let side = format!("{n} match{}  ·  ESC closes", if n == 1 { "" } else { "es" });
+                    let side =
+                        format!("{n} match{}  ·  ESC closes", if n == 1 { "" } else { "es" });
                     dtext(
                         &side,
                         bx + box_w + 14.0 * k,
@@ -1146,6 +1154,7 @@ async fn main() {
                             scheduled_until: 0.0,
                             menu_sel: *menu_sel,
                             from_menu: false,
+                            off_ms: CALIB_MS.load(Ordering::Relaxed),
                         });
                         next_frame().await;
                         continue;
@@ -1354,8 +1363,7 @@ async fn main() {
                             engine.sample_rate,
                             stem_cache.clone(),
                         );
-                        scene =
-                            Scene::Loading { rx, song, diff, title: songs[song].title.clone() };
+                        scene = Scene::Loading { rx, song, diff, title: songs[song].title.clone() };
                         next_frame().await;
                         continue;
                     }
@@ -1595,10 +1603,10 @@ async fn main() {
                     next_frame().await;
                     continue;
                 }
-                let ready = cal.taps.len() >= 4;
-                if is_key_pressed(KeyCode::Enter) && ready {
-                    let ms = (median(&cal.taps) * 1000.0).round() as i64;
-                    CALIB_MS.store(ms, Ordering::Relaxed);
+                // Fine-tune step for hand-nudging the offset with Left/Right.
+                const STEP_MS: i64 = 5;
+                if is_key_pressed(KeyCode::Enter) {
+                    CALIB_MS.store(cal.off_ms, Ordering::Relaxed);
                     engine.stop_timeline();
                     engine.play(&sounds.kick, 0.5);
                     scene = back;
@@ -1607,12 +1615,23 @@ async fn main() {
                 }
                 if is_key_pressed(KeyCode::R) {
                     cal.taps.clear();
-                    CALIB_MS.store(0, Ordering::Relaxed);
+                    cal.off_ms = 0;
                     while get_char_pressed().is_some() {}
                     next_frame().await;
                     continue;
                 }
-                // Any letter (or space) is a tap; offset vs the nearest tick
+                // Left/Right nudge the offset by hand — fine-tuning after the
+                // taps land you close, or dialing it in from scratch without
+                // tapping at all. Same key convention as the settings rows.
+                let dir =
+                    is_key_pressed(KeyCode::Right) as i64 - is_key_pressed(KeyCode::Left) as i64;
+                if dir != 0 {
+                    cal.off_ms = (cal.off_ms + dir * STEP_MS).clamp(-500, 500);
+                    engine.play(&sounds.hat, 0.4);
+                }
+                // Any letter (or space) is a tap; offset vs the nearest tick.
+                // The running tap median drives the offset directly, so the
+                // number tracks live as you play along.
                 while let Some(c) = get_char_pressed() {
                     let c = c.to_ascii_lowercase();
                     if (is_typeable(c) || c == ' ') && now > -0.25 {
@@ -1621,6 +1640,7 @@ async fn main() {
                         if cal.taps.len() > 24 {
                             cal.taps.remove(0);
                         }
+                        cal.off_ms = (median(&cal.taps) * 1000.0).round() as i64;
                     }
                 }
                 // Keep the metronome stocked a few ticks ahead
@@ -1639,7 +1659,7 @@ async fn main() {
                 let k = ui();
                 draw_centered("CALIBRATION", 120.0 * k, 48.0 * k, Color::new(1.0, 1.0, 1.0, 0.95));
                 draw_centered(
-                    "tap any letter key exactly on each tick",
+                    "tap any letter key on each tick, or set the offset by hand",
                     162.0 * k,
                     20.0 * k,
                     wa(th().secondary, 0.8),
@@ -1692,47 +1712,43 @@ async fn main() {
                     let a = 0.2 + 0.6 * (i + 1) as f32 / n as f32;
                     draw_circle(x, ay, 4.0 * k, Color::new(1.0, 1.0, 1.0, a));
                 }
-                if !cal.taps.is_empty() {
-                    let m = median(&cal.taps);
-                    let mx =
-                        (cx + (m as f32 / 0.150) * (aw / 2.0)).clamp(cx - aw / 2.0, cx + aw / 2.0);
-                    let arm = 14.0 * k;
-                    draw_line(mx, ay - arm, mx, ay + arm, 3.0 * k, wa(th().accent, 0.9));
-                    draw_centered(
-                        &format!("offset {:+.0} ms   ({} taps)", m * 1000.0, n),
-                        ay + 58.0 * k,
-                        24.0 * k,
-                        wa(th().accent, 0.9),
-                    );
-                }
-                // ENTER only appears once it does something — an apply key
-                // that's dead for the first four taps teaches the wrong thing.
-                //
-                // Counted off the tap list as it stands *now*, not off `ready`
-                // above: taps are pushed after that was read, so a frame that
-                // lands two at once would otherwise underflow the countdown
-                // and show the footer a state late.
+                // The committed offset — where a perfect hit will sit relative
+                // to the beat. Driven by the tap median or nudged by hand; the
+                // marker pins it against the tap scatter. Always shown, since
+                // the offset can now be set with the arrows and no taps at all.
+                let off_s = cal.off_ms as f32 / 1000.0;
+                let mx = (cx + (off_s / 0.150) * (aw / 2.0)).clamp(cx - aw / 2.0, cx + aw / 2.0);
+                let arm = 14.0 * k;
+                draw_line(mx, ay - arm, mx, ay + arm, 3.0 * k, wa(th().accent, 0.9));
+                let taps_note = if n > 0 { format!("   ({n} taps)") } else { String::new() };
+                draw_centered(
+                    &format!("offset {:+} ms{taps_note}", cal.off_ms),
+                    ay + 58.0 * k,
+                    24.0 * k,
+                    wa(th().accent, 0.9),
+                );
+                // A few taps still get you in the ballpark fastest, so nudge
+                // toward tapping until there's enough to take a median — but
+                // the arrows can set the offset on their own, so nothing is
+                // gated on it and the full footer shows from the start.
                 let s = Style::hint(k);
                 let left = 4usize.saturating_sub(cal.taps.len());
                 if left > 0 {
                     let tick = if left == 1 { "tick" } else { "ticks" };
                     draw_centered(
-                        &format!("tap along with {left} more {tick}"),
+                        &format!("tap along with {left} more {tick} for a quick estimate"),
                         screen_height() - 62.0 * k - s.height(),
                         18.0 * k,
                         wa(th().secondary, 0.7),
                     );
                 }
+                let adjust = [Item::act(Cap::Pair("-", "+"), "adjust")];
                 let apply = [Item::act(Cap::Txt("ENTER"), "apply")];
                 let reset = [Item::act(Cap::Txt("R"), "reset to 0")];
                 let cancel = [Item::act(Cap::Txt("ESC"), "cancel")];
                 let cy = screen_height() - 30.0 * k - s.height() / 2.0;
                 let avail = screen_width() - FOOTER_INSET * 2.0 * k;
-                if left == 0 {
-                    draw_strip(&[&apply, &reset, &cancel], cy, avail, s);
-                } else {
-                    draw_strip(&[&reset, &cancel], cy, avail, s);
-                }
+                draw_strip(&[&adjust, &apply, &reset, &cancel], cy, avail, s);
             }
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -1765,7 +1781,8 @@ async fn main() {
                                         .iter()
                                         .position(|x| x.title == title && !x.locked)
                                         .unwrap_or(0);
-                                    toast = Some(Toast::new(format!("added {title} to your library")));
+                                    toast =
+                                        Some(Toast::new(format!("added {title} to your library")));
                                     scene = Scene::Menu { sel: at, diff_sel: 0, scroll: at as f32 };
                                     next_frame().await;
                                     continue;
