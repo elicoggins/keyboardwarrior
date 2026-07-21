@@ -1,7 +1,8 @@
 // Clone Hero song loading: parses RB-style .mid and text .chart note charts
-// plus song.ini metadata into a common SongChart. Only 5-fret guitar tracks
-// are read; what we take from a chart is the charter's *timing* — which beats
-// carry notes — plus star power phrases and the tempo map.
+// plus song.ini metadata into a common SongChart. The 5-fret guitar and bass
+// tracks are read as separate playable charts (the player picks which);
+// what we take from a chart is the charter's *timing* — which beats carry
+// notes — plus star power phrases and the tempo map.
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
@@ -17,11 +18,21 @@ pub struct ChartNote {
     pub len: f64,  // sustain length in seconds (0 for a tap)
 }
 
-/// Which charted instrument the gems follow — decides which stem ducks.
-#[derive(Clone, Copy, PartialEq)]
+/// A playable 5-fret track. A song can chart more than one; the player picks
+/// which to play, and it also decides which audio stem ducks.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Instrument {
     Guitar,
     Bass,
+}
+
+impl Instrument {
+    pub fn label(self) -> &'static str {
+        match self {
+            Instrument::Guitar => "GUITAR",
+            Instrument::Bass => "BASS",
+        }
+    }
 }
 
 pub struct SongChart {
@@ -32,6 +43,39 @@ pub struct SongChart {
     pub sp: [Vec<(f64, f64)>; 4],   // star power phrases (start, end) per difficulty
     pub beats: Vec<f64>,            // beat times for grid/pulse rendering
     pub end: f64,
+}
+
+/// A song must chart at least this many notes at a difficulty for that
+/// difficulty to count as playable (skips near-empty stub tracks).
+pub const MIN_NOTES: usize = 20;
+
+/// When a difficulty is charted for more than one instrument, a track with
+/// fewer than this fraction of the fullest track's notes is treated as the
+/// sparse/incidental one and dropped, so the picker only offers genuinely
+/// comparable charts.
+const DOMINANCE_RATIO: f64 = 0.5;
+
+/// What one instrument charts for a song: note count per difficulty (0 where
+/// unavailable). Lives on SongEntry so the menu can decide, per difficulty,
+/// whether to offer a chart picker without loading the whole song.
+#[derive(Clone, Copy)]
+pub struct ChartInfo {
+    pub instrument: Instrument,
+    pub counts: [usize; 4],
+}
+
+/// Which instruments to offer for a chosen difficulty. Returns every charted
+/// instrument, minus any that are sparse next to the fullest (the dominance
+/// rule) — so a single entry means "just play it", two means "let them pick".
+pub fn charts_for_diff(charts: &[ChartInfo], diff: usize) -> Vec<Instrument> {
+    let candidates: Vec<&ChartInfo> =
+        charts.iter().filter(|c| c.counts[diff] >= MIN_NOTES).collect();
+    let max = candidates.iter().map(|c| c.counts[diff]).max().unwrap_or(0);
+    candidates
+        .into_iter()
+        .filter(|c| c.counts[diff] as f64 >= max as f64 * DOMINANCE_RATIO)
+        .map(|c| c.instrument)
+        .collect()
 }
 
 /// Where a song lives: an unpacked folder, or a .sng straight from
@@ -68,7 +112,8 @@ pub struct SongEntry {
     pub source: SongSource,
     pub title: String,
     pub artist: String,
-    pub available: Vec<usize>, // difficulty indices with notes
+    pub available: Vec<usize>, // difficulty indices playable by at least one chart
+    pub charts: Vec<ChartInfo>, // per-instrument note counts, for the chart picker
     // A non-playable signpost row (the browser demo's "download to expand
     // library" entry): drawn dimmed, skipped by menu navigation.
     pub locked: bool,
@@ -124,7 +169,7 @@ fn beats_until(map: &TempoMap, tpq: f64, max_tick: u64) -> Vec<f64> {
 
 // ---------------------------------------------------------------- .mid
 
-pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
+pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<Vec<SongChart>, String> {
     let smf = midly::Smf::parse(bytes).map_err(|e| format!("bad MIDI: {e}"))?;
     let tpq = match smf.header.timing {
         midly::Timing::Metrical(t) => t.as_int() as f64,
@@ -144,9 +189,10 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
     }
     let map = TempoMap::new(tempos, tpq);
 
-    // Collect the 5-fret tracks we can play (guitar and bass), then keep the
-    // one that carries the song: earliest entry wins (a track that sits out
-    // the intro riff loses to one playing from the top), ties go to density.
+    // Collect the playable 5-fret tracks (guitar and bass). A song can chart a
+    // track more than once; per instrument we keep the one that carries the
+    // song: earliest entry wins (a track that sits out the intro riff loses to
+    // one playing from the top), ties go to density.
     struct TrackData {
         instrument: Instrument,
         notes: Vec<(u64, u8, u64)>, // (tick, midi key, length in ticks)
@@ -205,57 +251,68 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<SongChart, String> {
             candidates.push(TrackData { instrument, notes, sp: local_sp, first });
         }
     }
-    let best = candidates
-        .into_iter()
-        .min_by(|a, b| a.first.cmp(&b.first).then(b.notes.len().cmp(&a.notes.len())))
-        .ok_or("no PART GUITAR or PART BASS track with notes")?;
 
-    let mut diffs: [Vec<ChartNote>; 4] = Default::default();
-    let mut max_tick = 0u64;
-    // Difficulty note ranges: Easy 60–64, Medium 72–76, Hard 84–88, Expert 96–100
-    for (t, k, lt) in best.notes {
-        let d = match k {
-            60..=64 => 0,
-            72..=76 => 1,
-            84..=88 => 2,
-            96..=100 => 3,
-            _ => continue,
-        };
-        max_tick = max_tick.max(t);
-        let time = map.sec(t) + delay;
-        let len = (map.sec(t + lt) - map.sec(t)).max(0.0);
-        // Collapse chords: one gem per tick, keeping the longest sustain
-        if diffs[d].last().is_none_or(|n: &ChartNote| n.time < time - 1e-9) {
-            diffs[d].push(ChartNote { time, len });
-        } else if let Some(last) = diffs[d].last_mut() {
-            last.len = last.len.max(len);
+    // Turn one instrument's best track into a SongChart, or None if it charts
+    // no notes in any difficulty.
+    let build = |instrument: Instrument| -> Option<SongChart> {
+        let best = candidates
+            .iter()
+            .filter(|c| c.instrument == instrument)
+            .min_by(|a, b| a.first.cmp(&b.first).then(b.notes.len().cmp(&a.notes.len())))?;
+
+        let mut diffs: [Vec<ChartNote>; 4] = Default::default();
+        let mut max_tick = 0u64;
+        // Difficulty note ranges: Easy 60–64, Medium 72–76, Hard 84–88, Expert 96–100
+        for &(t, k, lt) in &best.notes {
+            let d = match k {
+                60..=64 => 0,
+                72..=76 => 1,
+                84..=88 => 2,
+                96..=100 => 3,
+                _ => continue,
+            };
+            max_tick = max_tick.max(t);
+            let time = map.sec(t) + delay;
+            let len = (map.sec(t + lt) - map.sec(t)).max(0.0);
+            // Collapse chords: one gem per tick, keeping the longest sustain
+            if diffs[d].last().is_none_or(|n: &ChartNote| n.time < time - 1e-9) {
+                diffs[d].push(ChartNote { time, len });
+            } else if let Some(last) = diffs[d].last_mut() {
+                last.len = last.len.max(len);
+            }
         }
-    }
-    let sp_spans = best.sp;
-    if diffs.iter().all(|d| d.is_empty()) {
-        return Err("no notes in any difficulty".into());
-    }
+        if diffs.iter().all(|d| d.is_empty()) {
+            return None;
+        }
 
-    let sp_secs: Vec<(f64, f64)> =
-        sp_spans.iter().map(|&(a, b)| (map.sec(a) + delay, map.sec(b) + delay)).collect();
-    let sp = [sp_secs.clone(), sp_secs.clone(), sp_secs.clone(), sp_secs];
+        let sp_secs: Vec<(f64, f64)> =
+            best.sp.iter().map(|&(a, b)| (map.sec(a) + delay, map.sec(b) + delay)).collect();
+        let sp = [sp_secs.clone(), sp_secs.clone(), sp_secs.clone(), sp_secs];
 
-    let beats = beats_until(&map, tpq, max_tick + (tpq as u64) * 8);
-    let end = diffs.iter().flat_map(|d| d.iter()).map(|n| n.time + n.len).fold(0.0, f64::max);
-    Ok(SongChart {
-        title: String::new(),
-        artist: String::new(),
-        instrument: best.instrument,
-        diffs,
-        sp,
-        beats,
-        end,
-    })
+        let beats = beats_until(&map, tpq, max_tick + (tpq as u64) * 8);
+        let end = diffs.iter().flat_map(|d| d.iter()).map(|n| n.time + n.len).fold(0.0, f64::max);
+        Some(SongChart {
+            title: String::new(),
+            artist: String::new(),
+            instrument,
+            diffs,
+            sp,
+            beats,
+            end,
+        })
+    };
+
+    let charts: Vec<SongChart> =
+        [Instrument::Guitar, Instrument::Bass].into_iter().filter_map(build).collect();
+    if charts.is_empty() {
+        return Err("no PART GUITAR or PART BASS track with notes".into());
+    }
+    Ok(charts)
 }
 
 // ---------------------------------------------------------------- .chart
 
-pub fn parse_chart(text: &str, delay: f64) -> Result<SongChart, String> {
+pub fn parse_chart(text: &str, delay: f64) -> Result<Vec<SongChart>, String> {
     // Split into [Section] { ... } blocks
     let mut sections: Vec<(String, Vec<&str>)> = Vec::new();
     let mut current: Option<(String, Vec<&str>)> = None;
@@ -346,8 +403,9 @@ pub fn parse_chart(text: &str, delay: f64) -> Result<SongChart, String> {
 
     let beats = beats_until(&map, resolution, max_tick + resolution as u64 * 8);
     let end = diffs.iter().flat_map(|d| d.iter()).map(|n| n.time + n.len).fold(0.0, f64::max);
-    // The .chart "Single" track is lead guitar by definition
-    Ok(SongChart { title, artist, instrument: Instrument::Guitar, diffs, sp, beats, end })
+    // The .chart "Single" track is lead guitar by definition — this format
+    // carries no bass chart the game reads, so there's only ever one option.
+    Ok(vec![SongChart { title, artist, instrument: Instrument::Guitar, diffs, sp, beats, end }])
 }
 
 // ---------------------------------------------------------------- loading
@@ -382,7 +440,8 @@ fn sng_notes(sng: &SngFile) -> Result<SngNotes, String> {
     Ok((t, a, d, mid, chart_text))
 }
 
-pub fn load_song(source: &SongSource) -> Result<SongChart, String> {
+/// Every playable chart (one per instrument) for a song, sharing its metadata.
+pub fn load_song(source: &SongSource) -> Result<Vec<SongChart>, String> {
     let (title, artist, delay, mid, chart_text) = match source {
         SongSource::Folder(dir) => {
             let ini = std::fs::read_to_string(dir.join("song.ini")).unwrap_or_default();
@@ -403,20 +462,51 @@ pub fn load_song(source: &SongSource) -> Result<SongChart, String> {
         SongSource::Bytes(bytes) => sng_notes(&SngFile::from_bytes(bytes.clone())?)?,
     };
 
-    let mut chart = if let Some(bytes) = mid {
+    let mut charts = if let Some(bytes) = mid {
         parse_mid(&bytes, delay)?
     } else if let Some(text) = chart_text {
         parse_chart(&text, delay)?
     } else {
         return Err("no notes.mid or notes.chart".into());
     };
-    if !title.is_empty() {
-        chart.title = title;
+    for chart in &mut charts {
+        if !title.is_empty() {
+            chart.title = title.clone();
+        }
+        if !artist.is_empty() {
+            chart.artist = artist.clone();
+        }
     }
-    if !artist.is_empty() {
-        chart.artist = artist;
+    Ok(charts)
+}
+
+/// The chart matching `instrument`, or the first available as a fallback (a
+/// requested instrument can go missing if the library changed under us).
+pub fn pick_chart(charts: Vec<SongChart>, instrument: Instrument) -> Option<SongChart> {
+    let mut charts = charts;
+    let idx = charts.iter().position(|c| c.instrument == instrument).unwrap_or(0);
+    if charts.is_empty() {
+        None
+    } else {
+        Some(charts.swap_remove(idx))
     }
-    Ok(chart)
+}
+
+/// Note counts per instrument per difficulty for a set of charts — the summary
+/// SongEntry stores so the menu can drive the chart picker.
+pub fn chart_infos(charts: &[SongChart]) -> Vec<ChartInfo> {
+    charts
+        .iter()
+        .map(|c| ChartInfo {
+            instrument: c.instrument,
+            counts: std::array::from_fn(|d| c.diffs[d].len()),
+        })
+        .collect()
+}
+
+/// Difficulty indices playable by at least one of the given charts.
+pub fn available_diffs(charts: &[SongChart]) -> Vec<usize> {
+    (0..4).filter(|&d| charts.iter().any(|c| c.diffs[d].len() >= MIN_NOTES)).collect()
 }
 
 const AUDIO_EXTS: [&str; 4] = ["opus", "ogg", "mp3", "wav"];
@@ -493,6 +583,7 @@ pub fn scan_songs(root: &Path) -> Vec<SongEntry> {
         // A song that fails to load still becomes a (dimmed, unplayable) entry
         // so the player can see and delete it from the menu.
         let broken = |source, msg: String| SongEntry {
+            charts: Vec::new(),
             title: name.clone(),
             artist: String::new(),
             available: Vec::new(),
@@ -501,21 +592,19 @@ pub fn scan_songs(root: &Path) -> Vec<SongEntry> {
             error: Some(msg),
         };
         match load_song(&source) {
-            Ok(chart) => {
-                let available: Vec<usize> =
-                    (0..4).filter(|&d| chart.diffs[d].len() >= 20).collect();
+            Ok(charts) => {
+                let available = available_diffs(&charts);
                 if available.is_empty() {
                     entries.push(broken(source, "no difficulty with enough notes".into()));
                     continue;
                 }
+                let (title, artist) =
+                    charts.first().map(|c| (c.title.clone(), c.artist.clone())).unwrap_or_default();
                 entries.push(SongEntry {
-                    title: if chart.title.is_empty() {
-                        "Unknown".into()
-                    } else {
-                        chart.title.clone()
-                    },
-                    artist: chart.artist.clone(),
+                    title: if title.is_empty() { "Unknown".into() } else { title },
+                    artist,
                     available,
+                    charts: chart_infos(&charts),
                     source,
                     locked: false,
                     error: None,
@@ -599,9 +688,10 @@ mod sng_tests {
             return;
         }
         let source = SongSource::Sng(path.to_path_buf());
-        let chart = load_song(&source).expect("demo .sng should parse");
+        let charts = load_song(&source).expect("demo .sng should parse");
+        let chart = pick_chart(charts, Instrument::Guitar).expect("guitar chart");
         assert_eq!(chart.title, "Code Monkey");
-        assert!(chart.instrument == Instrument::Guitar);
+        assert_eq!(chart.instrument, Instrument::Guitar);
         assert!(chart.diffs.iter().all(|d| d.len() >= 20));
         let stems = stem_files(&source).expect("stems should read");
         assert_eq!(stems.len(), 2, "premixed backing + guitar lead");
@@ -620,10 +710,12 @@ mod sng_tests {
             return;
         }
         let source = SongSource::Sng(path.to_path_buf());
-        let chart = load_song(&source).expect(".sng should parse");
+        let charts = load_song(&source).expect(".sng should parse");
+        // This rip charts a bass line; keep the bass-stem test meaningful.
+        let chart = pick_chart(charts, Instrument::Bass).expect("bass chart");
         assert_eq!(chart.title, "Seven Nation Army");
-        assert!(chart.instrument == Instrument::Bass);
-        assert!(chart.diffs[0].len() > 100);
+        assert_eq!(chart.instrument, Instrument::Bass);
+        assert!(chart.diffs.iter().any(|d| d.len() > 100));
         let stems = stem_files(&source).expect("stems should read");
         println!(
             "sng stems: {:?}",

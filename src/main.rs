@@ -27,7 +27,7 @@ mod web;
 mod words;
 
 use audio::{make_sounds, AudioEngine, Buf};
-use chart::{SongChart, SongSource, DIFF_NAMES};
+use chart::{Instrument, SongChart, SongSource, DIFF_NAMES};
 use controls::{draw_inline_cap, draw_rule, draw_strip, Cap, Item, Style};
 use gfx::{draw_centered, draw_frame_graph, dtext, msize, prewarm_glyphs, ui, FRAME_LOG_LEN};
 use play::{is_typeable, lane_of, Judgement, Play, Results, SongRef};
@@ -107,6 +107,11 @@ enum Scene {
         sel: usize,
         diff_sel: usize,
         scroll: f32,
+        // When Some, Enter has been pressed on a difficulty that charts two
+        // comparable instruments, so the difficulty row is showing a
+        // guitar/bass chooser instead: (options, highlighted index). Moving up
+        // or down the song list cancels it, back to difficulty selection.
+        pick: Option<(Vec<Instrument>, usize)>,
     },
     Settings {
         sel: usize,
@@ -207,7 +212,9 @@ enum ChorusMsg {
     Downloaded(Result<String, String>), // Ok(title) once saved into songs/
 }
 
-type StemCache = Option<(SongSource, Buf, Option<Buf>)>;
+// The cached mix is instrument-specific: guitar and bass duck different stems,
+// so the key carries which instrument produced this backing+lead.
+type StemCache = Option<(SongSource, Instrument, Buf, Option<Buf>)>;
 
 struct LoadedSong {
     chart: SongChart,
@@ -223,10 +230,15 @@ enum LoadMsg {
 /// Kick off a song load on a worker thread so the render loop keeps
 /// animating; the Loading scene polls the returned channel.
 #[cfg(not(target_arch = "wasm32"))]
-fn spawn_loader(source: SongSource, rate: u32, cached: StemCache) -> Receiver<LoadMsg> {
+fn spawn_loader(
+    source: SongSource,
+    instrument: Instrument,
+    rate: u32,
+    cached: StemCache,
+) -> Receiver<LoadMsg> {
     let (tx, rx) = channel();
     std::thread::spawn(move || {
-        let msg = match load_song_full(&source, rate, cached) {
+        let msg = match load_song_full(&source, instrument, rate, cached) {
             Ok(l) => LoadMsg::Done(Box::new(l)),
             Err(e) => LoadMsg::Failed(e),
         };
@@ -255,10 +267,15 @@ fn open_in_file_manager(path: &std::path::Path) -> std::io::Result<()> {
 /// loading screen is visible first) and then runs synchronously on the game
 /// thread — see web::pump in the main loop.
 #[cfg(target_arch = "wasm32")]
-fn spawn_loader(source: SongSource, rate: u32, cached: StemCache) -> Receiver<LoadMsg> {
+fn spawn_loader(
+    source: SongSource,
+    instrument: Instrument,
+    rate: u32,
+    cached: StemCache,
+) -> Receiver<LoadMsg> {
     let (tx, rx) = channel();
     web::defer(move || {
-        let msg = match load_song_full(&source, rate, cached) {
+        let msg = match load_song_full(&source, instrument, rate, cached) {
             Ok(l) => LoadMsg::Done(Box::new(l)),
             Err(e) => LoadMsg::Failed(e),
         };
@@ -271,10 +288,16 @@ fn spawn_loader(source: SongSource, rate: u32, cached: StemCache) -> Receiver<Lo
 /// .sng — no conversions). Stems are decoded one at a time and summed into
 /// the backing mix as they finish, so peak memory is the mix plus a single
 /// stem — not every decoded stem at once.
-fn load_song_full(source: &SongSource, rate: u32, cached: StemCache) -> Result<LoadedSong, String> {
-    let chart = chart::load_song(source)?;
-    if let Some((src, backing, lead)) = cached {
-        if src == *source {
+fn load_song_full(
+    source: &SongSource,
+    instrument: Instrument,
+    rate: u32,
+    cached: StemCache,
+) -> Result<LoadedSong, String> {
+    let charts = chart::load_song(source)?;
+    let chart = chart::pick_chart(charts, instrument).ok_or("song has no playable chart")?;
+    if let Some((src, inst, backing, lead)) = cached {
+        if src == *source && inst == instrument {
             return Ok(LoadedSong { chart, backing, lead });
         }
     }
@@ -282,7 +305,7 @@ fn load_song_full(source: &SongSource, rate: u32, cached: StemCache) -> Result<L
     if stems.is_empty() {
         return Err("no audio stems found".into());
     }
-    let lead_names = chart::lead_stem_names(chart.instrument);
+    let lead_names = chart::lead_stem_names(instrument);
     let mut mix: Vec<[f32; 2]> = Vec::new();
     let mut lead: Option<Buf> = None;
     let mut failures: Vec<String> = Vec::new();
@@ -494,7 +517,7 @@ async fn main() {
     // again on the same row removes it. Any navigation disarms.
     #[cfg(not(target_arch = "wasm32"))]
     let mut pending_delete: Option<usize> = None;
-    let mut scene = Scene::Menu { sel: 0, diff_sel: 0, scroll: 0.0 };
+    let mut scene = Scene::Menu { sel: 0, diff_sel: 0, scroll: 0.0, pick: None };
 
     // Debug hook: KW_AUTOSTART=<song>:<diff> jumps straight into a song
     if let Ok(v) = std::env::var("KW_AUTOSTART") {
@@ -502,7 +525,9 @@ async fn main() {
         let s: usize = it.next().and_then(|x| x.parse().ok()).unwrap_or(0);
         let d: usize = it.next().and_then(|x| x.parse().ok()).unwrap_or(0);
         if s < songs.len() {
-            let rx = spawn_loader(songs[s].source.clone(), engine.sample_rate, None);
+            let instrument =
+                songs[s].charts.first().map(|c| c.instrument).unwrap_or(Instrument::Guitar);
+            let rx = spawn_loader(songs[s].source.clone(), instrument, engine.sample_rate, None);
             scene = Scene::Loading { rx, song: s, diff: d, title: songs[s].title.clone() };
         }
     }
@@ -540,7 +565,7 @@ async fn main() {
         }
         frame_log.push_back(get_frame_time());
         match &mut scene {
-            Scene::Menu { sel, diff_sel, scroll } => {
+            Scene::Menu { sel, diff_sel, scroll, pick } => {
                 let rows = songs.len();
                 if rows == 0 {
                     let k = ui();
@@ -588,6 +613,10 @@ async fn main() {
                     if is_key_pressed(KeyCode::Escape) {
                         menu_search = None;
                     }
+                } else if is_key_pressed(KeyCode::Escape) && pick.is_some() {
+                    // Back out of the guitar/bass chooser to difficulty selection.
+                    *pick = None;
+                    engine.play(&sounds.hat, 0.4);
                 } else if is_key_pressed(KeyCode::Semicolon) {
                     menu_search = Some(String::new());
                     // Swallow the ';' so it doesn't land in the fresh query.
@@ -615,6 +644,7 @@ async fn main() {
                 if !view.is_empty() && !view.contains(&*sel) {
                     *sel = view.iter().copied().find(|&i| !songs[i].locked).unwrap_or(view[0]);
                     *diff_sel = 0;
+                    *pick = None;
                 }
 
                 // Difficulty options for the selected song. A broken song has
@@ -628,6 +658,9 @@ async fn main() {
                     if let Some(next) = step_selection(&view, &songs, *sel, dir) {
                         *sel = next;
                         *diff_sel = 0;
+                        // Moving to another song leaves the chooser behind — the
+                        // pick isn't kept for when you come back.
+                        *pick = None;
                         engine.play(&sounds.hat, 0.4);
                     }
                 }
@@ -636,13 +669,26 @@ async fn main() {
                 if nav.is_some() && pending_delete.is_some_and(|d| d != *sel) {
                     pending_delete = None;
                 }
-                if is_key_pressed(KeyCode::Left) && *diff_sel > 0 {
-                    *diff_sel -= 1;
-                    engine.play(&sounds.hat, 0.4);
-                }
-                if is_key_pressed(KeyCode::Right) && *diff_sel + 1 < diff_opts.len() {
-                    *diff_sel += 1;
-                    engine.play(&sounds.hat, 0.4);
+                // Left/right pick the instrument while the chooser is up, else
+                // they cycle the difficulty.
+                if let Some((options, isel)) = pick.as_mut() {
+                    if is_key_pressed(KeyCode::Left) && *isel > 0 {
+                        *isel -= 1;
+                        engine.play(&sounds.hat, 0.4);
+                    }
+                    if is_key_pressed(KeyCode::Right) && *isel + 1 < options.len() {
+                        *isel += 1;
+                        engine.play(&sounds.hat, 0.4);
+                    }
+                } else {
+                    if is_key_pressed(KeyCode::Left) && *diff_sel > 0 {
+                        *diff_sel -= 1;
+                        engine.play(&sounds.hat, 0.4);
+                    }
+                    if is_key_pressed(KeyCode::Right) && *diff_sel + 1 < diff_opts.len() {
+                        *diff_sel += 1;
+                        engine.play(&sounds.hat, 0.4);
+                    }
                 }
                 // Hotkeys for the common settings, mirrored on the settings
                 // screen (O) — regulars shouldn't need to leave the menu. All
@@ -785,18 +831,42 @@ async fn main() {
                     engine.play(&sounds.miss, 0.3);
                     toast = Some(Toast::new("this song failed to load - it can't be played"));
                 } else if is_key_pressed(KeyCode::Enter) {
-                    engine.play(&sounds.kick, 0.5);
-                    toast = None;
                     let (row, d) = (*sel, diff_opts[*diff_sel].0);
-                    let rx = spawn_loader(
-                        songs[row].source.clone(),
-                        engine.sample_rate,
-                        stem_cache.clone(),
-                    );
-                    scene =
-                        Scene::Loading { rx, song: row, diff: d, title: songs[row].title.clone() };
-                    next_frame().await;
-                    continue;
+                    // Already choosing an instrument: launch it. Otherwise, if
+                    // this difficulty charts two comparable instruments, open the
+                    // chooser in the difficulty row and wait for the next Enter;
+                    // a single-chart difficulty launches straight away.
+                    let instrument = if pick.is_some() {
+                        let (options, isel) = pick.as_ref().unwrap();
+                        Some(options[*isel])
+                    } else {
+                        let options = chart::charts_for_diff(&songs[row].charts, d);
+                        if options.len() > 1 {
+                            *pick = Some((options, 0));
+                            engine.play(&sounds.hat, 0.4);
+                            None
+                        } else {
+                            Some(options.first().copied().unwrap_or(Instrument::Guitar))
+                        }
+                    };
+                    if let Some(instrument) = instrument {
+                        engine.play(&sounds.kick, 0.5);
+                        toast = None;
+                        let rx = spawn_loader(
+                            songs[row].source.clone(),
+                            instrument,
+                            engine.sample_rate,
+                            stem_cache.clone(),
+                        );
+                        scene = Scene::Loading {
+                            rx,
+                            song: row,
+                            diff: d,
+                            title: songs[row].title.clone(),
+                        };
+                        next_frame().await;
+                        continue;
+                    }
                 }
 
                 clear_background(th().bg);
@@ -980,6 +1050,36 @@ async fn main() {
                                 17.0 * k,
                                 wa(th().miss, 0.85 * fa),
                             );
+                        } else if let Some((options, isel)) = pick.as_ref() {
+                            // The difficulty row has turned into a guitar/bass
+                            // chooser for the chosen difficulty; each option
+                            // carries its note count so they're easy to tell
+                            // apart.
+                            let d = diff_opts.get(*diff_sel).map(|&(d, _)| d).unwrap_or(0);
+                            let joined: Vec<String> = options
+                                .iter()
+                                .enumerate()
+                                .map(|(i, inst)| {
+                                    let notes = song
+                                        .charts
+                                        .iter()
+                                        .find(|c| c.instrument == *inst)
+                                        .map(|c| c.counts[d])
+                                        .unwrap_or(0);
+                                    let label = format!("{} ({} notes)", inst.label(), notes);
+                                    if i == *isel {
+                                        format!("[ {label} ]")
+                                    } else {
+                                        label
+                                    }
+                                })
+                                .collect();
+                            draw_centered(
+                                &joined.join("   "),
+                                y + 52.0 * k,
+                                20.0 * k,
+                                wa(th().accent, 0.85 * fa),
+                            );
                         } else {
                             let joined: Vec<String> = diff_opts
                                 .iter()
@@ -1125,7 +1225,7 @@ async fn main() {
                 *sel = (*sel).min(rows.len() - 1);
                 if is_key_pressed(KeyCode::Escape) {
                     let m = *menu_sel;
-                    scene = Scene::Menu { sel: m, diff_sel: 0, scroll: m as f32 };
+                    scene = Scene::Menu { sel: m, diff_sel: 0, scroll: m as f32, pick: None };
                     next_frame().await;
                     continue;
                 }
@@ -1343,7 +1443,7 @@ async fn main() {
                         engine.stop_timeline();
                         let sel = play.song_ref.song;
                         let diff_sel = diff_pos(&songs, sel, play.song_ref.diff);
-                        scene = Scene::Menu { sel, diff_sel, scroll: sel as f32 };
+                        scene = Scene::Menu { sel, diff_sel, scroll: sel as f32, pick: None };
                         // Swallow the 'q' so a search bar left open on the menu
                         // doesn't pick it up as a typed character next frame.
                         while get_char_pressed().is_some() {}
@@ -1357,9 +1457,10 @@ async fn main() {
                         engine.set_paused(false);
                         engine.stop_timeline();
                         engine.play(&sounds.kick, 0.5);
-                        let SongRef { song, diff } = play.song_ref;
+                        let SongRef { song, diff, instrument } = play.song_ref;
                         let rx = spawn_loader(
                             songs[song].source.clone(),
+                            instrument,
                             engine.sample_rate,
                             stem_cache.clone(),
                         );
@@ -1456,15 +1557,16 @@ async fn main() {
                 if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Escape) {
                     let sel = r.song_ref.song;
                     let diff_sel = diff_pos(&songs, sel, r.song_ref.diff);
-                    scene = Scene::Menu { sel, diff_sel, scroll: sel as f32 };
+                    scene = Scene::Menu { sel, diff_sel, scroll: sel as f32, pick: None };
                     next_frame().await;
                     continue;
                 }
                 if is_key_pressed(KeyCode::R) {
                     engine.play(&sounds.kick, 0.5);
-                    let SongRef { song, diff } = r.song_ref;
+                    let SongRef { song, diff, instrument } = r.song_ref;
                     let rx = spawn_loader(
                         songs[song].source.clone(),
+                        instrument,
                         engine.sample_rate,
                         stem_cache.clone(),
                     );
@@ -1531,8 +1633,12 @@ async fn main() {
                     Ok(LoadMsg::Done(loaded)) => {
                         let (song, diff) = (*song, *diff);
                         let LoadedSong { chart, backing, lead } = *loaded;
-                        stem_cache =
-                            Some((songs[song].source.clone(), backing.clone(), lead.clone()));
+                        stem_cache = Some((
+                            songs[song].source.clone(),
+                            chart.instrument,
+                            backing.clone(),
+                            lead.clone(),
+                        ));
                         // Fall back to the hardest charted difficulty if the
                         // requested one is empty or trivial
                         let mut d = diff.min(3);
@@ -1549,12 +1655,12 @@ async fn main() {
                     Ok(LoadMsg::Failed(e)) => {
                         toast = Some(Toast::new(format!("{title}: {e}")));
                         let sel = *song;
-                        scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
+                        scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32, pick: None };
                     }
                     Err(TryRecvError::Disconnected) => {
                         toast = Some(Toast::new(format!("{title}: loader thread died")));
                         let sel = *song;
-                        scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32 };
+                        scene = Scene::Menu { sel, diff_sel: 0, scroll: sel as f32, pick: None };
                     }
                     Err(TryRecvError::Empty) => {
                         // Still decoding on the worker thread: keep animating
@@ -1587,7 +1693,7 @@ async fn main() {
                 // Both exits land back where the player came from: the menu
                 // (C hotkey) or the settings screen's calibrate row
                 let back = if cal.from_menu {
-                    Scene::Menu { sel: cal.menu_sel, diff_sel: 0, scroll: cal.menu_sel as f32 }
+                    Scene::Menu { sel: cal.menu_sel, diff_sel: 0, scroll: cal.menu_sel as f32, pick: None }
                 } else {
                     Scene::Settings {
                         sel: settings_rows()
@@ -1783,7 +1889,8 @@ async fn main() {
                                         .unwrap_or(0);
                                     toast =
                                         Some(Toast::new(format!("added {title} to your library")));
-                                    scene = Scene::Menu { sel: at, diff_sel: 0, scroll: at as f32 };
+                                    scene =
+                                        Scene::Menu { sel: at, diff_sel: 0, scroll: at as f32, pick: None };
                                     next_frame().await;
                                     continue;
                                 }
@@ -1802,7 +1909,7 @@ async fn main() {
                 let idle = cs.net.is_none();
                 if is_key_pressed(KeyCode::Escape) {
                     let m = cs.menu_sel;
-                    scene = Scene::Menu { sel: m, diff_sel: 0, scroll: m as f32 };
+                    scene = Scene::Menu { sel: m, diff_sel: 0, scroll: m as f32, pick: None };
                     next_frame().await;
                     continue;
                 }

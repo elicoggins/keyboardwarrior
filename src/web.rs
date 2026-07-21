@@ -55,15 +55,18 @@ pub async fn load_demo_library() -> Vec<SongEntry> {
 fn demo_entries(bytes: Vec<u8>) -> Vec<SongEntry> {
     let source = SongSource::Bytes(Arc::new(bytes));
     match chart::load_song(&source) {
-        Ok(chart) => {
-            let available: Vec<usize> = (0..4).filter(|&d| chart.diffs[d].len() >= 20).collect();
+        Ok(charts) => {
+            let available = chart::available_diffs(&charts);
             if available.is_empty() {
                 return Vec::new();
             }
+            let (title, artist) =
+                charts.first().map(|c| (c.title.clone(), c.artist.clone())).unwrap_or_default();
             let song = SongEntry {
-                title: if chart.title.is_empty() { "Code Monkey".into() } else { chart.title },
-                artist: chart.artist,
+                title: if title.is_empty() { "Code Monkey".into() } else { title },
+                artist,
                 available,
+                charts: chart::chart_infos(&charts),
                 source,
                 locked: false,
                 error: None,
@@ -72,6 +75,7 @@ fn demo_entries(bytes: Vec<u8>) -> Vec<SongEntry> {
                 title: "download to expand library".into(),
                 artist: String::new(),
                 available: Vec::new(),
+                charts: Vec::new(),
                 source: SongSource::Bytes(Arc::new(Vec::new())),
                 locked: true,
                 error: None,

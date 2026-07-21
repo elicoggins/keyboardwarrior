@@ -4,7 +4,7 @@
 use macroquad::prelude::*;
 
 use crate::audio::{self, AudioEngine, Buf, Sounds};
-use crate::chart::{SongChart, DIFF_NAMES};
+use crate::chart::{Instrument, SongChart, DIFF_NAMES};
 use crate::gfx::{draw_fit, dtext, msize, ui};
 use crate::settings::approach;
 use crate::theme::{mix, th, wa};
@@ -176,8 +176,9 @@ struct Floater {
 // Which song was played, for the results screen and instant restarts
 #[derive(Clone, Copy)]
 pub struct SongRef {
-    pub song: usize, // index into the scanned song list
-    pub diff: usize, // chart difficulty
+    pub song: usize,            // index into the scanned song list
+    pub diff: usize,            // chart difficulty
+    pub instrument: Instrument, // which chart (guitar/bass) was played
 }
 
 struct SpPhrase {
@@ -479,7 +480,7 @@ impl Play {
             }
         }
         Self::from_parts(
-            SongRef { song: song_idx, diff },
+            SongRef { song: song_idx, diff, instrument: chart.instrument },
             chart.title.clone(),
             DIFF_NAMES[diff].to_string(),
             notes,
