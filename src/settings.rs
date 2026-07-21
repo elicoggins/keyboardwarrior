@@ -218,7 +218,6 @@ impl SettingRow {
             SettingRow::TextMode => match text_mode() {
                 TextMode::Words => "phrases become real words sized to the beat",
                 TextMode::WordsFixed => "words, but a song + difficulty always deals the same ones",
-                TextMode::Sentences => "coherent sentences streamed letter by letter",
                 TextMode::Dfjk => "four keys, four lanes - any key in a lane's zone counts",
                 TextMode::Practice => "random letters - tune which keys appear below",
             },

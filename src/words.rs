@@ -1,4 +1,4 @@
-// What rides on the gems: the text modes, word pools, sentence corpus,
+// What rides on the gems: the text modes, word pools,
 // and the generators that deal a chart its words.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -8,15 +8,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 pub enum TextMode {
     Words,      // length-matched real words, one per phrase
     WordsFixed, // words, but a chart+difficulty always deals the same ones
-    Sentences,  // coherent sentences streamed letter by letter
     Dfjk,       // four keys, four lanes — gems are amalgams of d/f/j/k
     Practice,   // random letters from a player-tuned key set
 }
 
-pub const TEXT_MODES: [(TextMode, &str); 5] = [
+pub const TEXT_MODES: [(TextMode, &str); 4] = [
     (TextMode::Words, "WORDS"),
     (TextMode::WordsFixed, "WORDS (FIXED)"),
-    (TextMode::Sentences, "SENTENCES"),
     (TextMode::Dfjk, "DFJK"),
     (TextMode::Practice, "PRACTICE"),
 ];
@@ -259,44 +257,6 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
     ],
 ];
 
-// Sentence corpus for SENTENCES mode: coherent text streamed letter-by-letter
-// across the chart, monkeytype quote-style. Lowercase a–z plus unshifted
-// punctuation (comma, period, apostrophe) — every character is a gem.
-const SENTENCES: &[&str] = &[
-    "the quick brown fox jumps over the lazy dog.",
-    "pack my box with five dozen liquor jugs.",
-    "a journey of a thousand miles begins with a single step.",
-    "all that glitters is not gold.",
-    "the only way out is through.",
-    "music is the space between the notes.",
-    "fortune favors the bold.",
-    "practice doesn't make perfect, it makes permanent.",
-    "the stars look very different today.",
-    "we're all in the gutter, but some of us are looking at the stars.",
-    "type like the wind, and land on the beat.",
-    "every wall is a door.",
-    "simplicity is the ultimate sophistication.",
-    "stay hungry, stay foolish.",
-    "the night is young, and so are we.",
-    "lightning never strikes the same place twice.",
-    "still waters run deep.",
-    "the early bird catches the worm.",
-    "no rain, no flowers.",
-    "what we think, we become.",
-    "dance first, think later.",
-    "well begun is half done.",
-    "action is the foundational key to all success.",
-    "creativity takes courage.",
-    "leap, and the net will appear.",
-    "slow is smooth, and smooth is fast.",
-    "the best way to predict the future is to invent it.",
-    "where words fail, music speaks.",
-    "the rhythm of the night carries us home.",
-    "it's not the years in your life, it's the life in your years.",
-    "don't wait for opportunity, create it.",
-    "small steps every day add up to great distances.",
-];
-
 fn shuffle<T>(v: &mut [T]) {
     for i in (1..v.len()).rev() {
         let j = macroquad::rand::gen_range(0usize, i + 1).min(i);
@@ -386,59 +346,26 @@ pub fn chart_seed(title: &str, diff: usize) -> u64 {
 }
 
 /// Generate the text for a run. `groups` are the phrase sizes (note counts).
-/// WORDS: one length-matched word per phrase. SENTENCES: coherent sentences
-/// streamed across the same total number of notes. DFJK: amalgams of the
+/// WORDS: one length-matched word per phrase. DFJK: amalgams of the
 /// four lane keys. PRACTICE: random letters from the player-tuned key set.
 pub fn generate_text(groups: &[usize]) -> Vec<String> {
     match text_mode() {
         TextMode::Words | TextMode::WordsFixed => {
             let mut decks: Vec<WordDeck> = WORDS_BY_LEN.iter().map(|p| WordDeck::new(p)).collect();
-            return groups
+            groups
                 .iter()
                 .map(|&len| {
                     let idx = (len - 1).min(WORDS_BY_LEN.len() - 1);
                     decks[idx].next().to_string()
                 })
-                .collect();
+                .collect()
         }
-        TextMode::Dfjk => {
-            return groups.iter().map(|&len| random_word(len, &['d', 'f', 'j', 'k'])).collect();
-        }
+        TextMode::Dfjk => groups.iter().map(|&len| random_word(len, &['d', 'f', 'j', 'k'])).collect(),
         TextMode::Practice => {
             let keys = practice_keys();
-            return groups.iter().map(|&len| random_word(len, &keys)).collect();
-        }
-        TextMode::Sentences => {}
-    }
-
-    // Sentences: deal whole sentences until the letter budget is spent,
-    // topping off the tail with an exact-length word so every note has a letter
-    let mut decks: Vec<WordDeck> = WORDS_BY_LEN.iter().map(|p| WordDeck::new(p)).collect();
-    let total: usize = groups.iter().sum();
-    let mut order: Vec<usize> = (0..SENTENCES.len()).collect();
-    shuffle(&mut order);
-    let mut words: Vec<String> = Vec::new();
-    let mut remaining = total;
-    let mut queue: std::collections::VecDeque<&str> = std::collections::VecDeque::new();
-    let mut si = 0;
-    while remaining > 0 {
-        if queue.is_empty() {
-            queue.extend(SENTENCES[order[si % order.len()]].split_whitespace());
-            si += 1;
-        }
-        let w = *queue.front().unwrap();
-        if w.len() <= remaining {
-            words.push(w.to_string());
-            remaining -= w.len();
-            queue.pop_front();
-        } else if remaining <= WORDS_BY_LEN.len() {
-            words.push(decks[remaining - 1].next().to_string());
-            remaining = 0;
-        } else {
-            queue.pop_front(); // word too long for the tail; try the next
+            groups.iter().map(|&len| random_word(len, &keys)).collect()
         }
     }
-    words
 }
 
 #[cfg(test)]
@@ -490,27 +417,8 @@ mod text_tests {
         assert_ne!(chart_seed("Free Bird", 0), chart_seed("Free Bird", 1));
         assert_ne!(chart_seed("Free Bird", 0), chart_seed("Freebird", 0));
 
-        // SENTENCES mode: total letters == total notes, whatever the grouping
-        TEXT_MODE_IDX.store(2, Relaxed);
-        for total in [10usize, 57, 153, 309, 507] {
-            let mut groups = vec![3usize; total / 3];
-            match total % 3 {
-                0 => {}
-                r => groups.push(r),
-            }
-            let words = generate_text(&groups);
-            let letters: usize = words.iter().map(|w| w.len()).sum();
-            assert_eq!(letters, total);
-            for w in &words {
-                assert!(
-                    w.chars().all(|c| c.is_ascii_lowercase() || matches!(c, ',' | '.' | '\'')),
-                    "bad word {w:?}"
-                );
-            }
-        }
-
         // DFJK mode: amalgams of the four lane keys, and d pins to lane 0
-        TEXT_MODE_IDX.store(3, Relaxed);
+        TEXT_MODE_IDX.store(2, Relaxed);
         let groups = vec![1, 4, 8, 3, 6];
         let words = generate_text(&groups);
         for (w, &g) in words.iter().zip(&groups) {
@@ -525,7 +433,7 @@ mod text_tests {
         assert_eq!(gem_lane(','), 3, "punctuation aims at the K lane");
 
         // PRACTICE mode: filters shape the key set, lengths still match
-        TEXT_MODE_IDX.store(4, Relaxed);
+        TEXT_MODE_IDX.store(3, Relaxed);
         PRAC_RIGHT.store(false, Relaxed);
         PRAC_PUNCT.store(false, Relaxed);
         let words = generate_text(&[6; 20]);

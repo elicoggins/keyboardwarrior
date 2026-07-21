@@ -1182,7 +1182,7 @@ async fn main() {
                 // the same rows the settings screen carries, so a regular
                 // never has to leave the menu to check or change them.
                 let stats = [
-                    Item::stat(Cap::Txt("M"), "TEXT", mode_name),
+                    Item::stat(Cap::Txt("M"), "MODE", mode_name),
                     Item::stat(Cap::Txt("V"), "SPEED", speed),
                     Item::stat(Cap::Txt("T"), "THEME", th().name),
                     Item::stat(Cap::Txt("C"), "OFFSET", format!("{off_ms:+} ms")),

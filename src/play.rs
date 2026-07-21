@@ -634,7 +634,13 @@ impl Play {
             }
             return;
         }
-        let c = c.to_ascii_lowercase();
+        // macOS smart-punctuation text input turns a typed ' into a curly
+        // quote (U+2018/2019) before it ever reaches us — normalize back to
+        // the ascii apostrophe gems actually use, or the note just blows by
+        let c = match c.to_ascii_lowercase() {
+            '\u{2018}' | '\u{2019}' => '\'',
+            c => c,
+        };
         if !is_typeable(c) {
             return;
         }
