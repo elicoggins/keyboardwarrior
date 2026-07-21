@@ -732,6 +732,12 @@ async fn main() {
                                 *sel = row.min(songs.len().saturating_sub(1));
                                 toast = Some(Toast::new(format!("deleted {title}")));
                                 engine.play(&sounds.kick, 0.5);
+                                // Restart the frame: `view`/`diff_opts` above were
+                                // built off the old, longer list and would index
+                                // out of bounds against the freshly shrunk `songs`.
+                                pending_delete = None;
+                                next_frame().await;
+                                continue;
                             }
                             Err(e) => toast = Some(Toast::new(format!("couldn't delete {title}: {e}"))),
                         }
@@ -1329,6 +1335,9 @@ async fn main() {
                         let sel = play.song_ref.song;
                         let diff_sel = diff_pos(&songs, sel, play.song_ref.diff);
                         scene = Scene::Menu { sel, diff_sel, scroll: sel as f32 };
+                        // Swallow the 'q' so a search bar left open on the menu
+                        // doesn't pick it up as a typed character next frame.
+                        while get_char_pressed().is_some() {}
                         next_frame().await;
                         continue;
                     }
@@ -1592,6 +1601,13 @@ async fn main() {
                     next_frame().await;
                     continue;
                 }
+                if is_key_pressed(KeyCode::R) {
+                    cal.taps.clear();
+                    CALIB_MS.store(0, Ordering::Relaxed);
+                    while get_char_pressed().is_some() {}
+                    next_frame().await;
+                    continue;
+                }
                 // Any letter (or space) is a tap; offset vs the nearest tick
                 while let Some(c) = get_char_pressed() {
                     let c = c.to_ascii_lowercase();
@@ -1704,13 +1720,14 @@ async fn main() {
                     );
                 }
                 let apply = [Item::act(Cap::Txt("ENTER"), "apply")];
+                let reset = [Item::act(Cap::Txt("R"), "reset to 0")];
                 let cancel = [Item::act(Cap::Txt("ESC"), "cancel")];
                 let cy = screen_height() - 30.0 * k - s.height() / 2.0;
                 let avail = screen_width() - FOOTER_INSET * 2.0 * k;
                 if left == 0 {
-                    draw_strip(&[&apply, &cancel], cy, avail, s);
+                    draw_strip(&[&apply, &reset, &cancel], cy, avail, s);
                 } else {
-                    draw_strip(&[&cancel], cy, avail, s);
+                    draw_strip(&[&reset, &cancel], cy, avail, s);
                 }
             }
 
