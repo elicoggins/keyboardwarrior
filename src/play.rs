@@ -746,14 +746,15 @@ impl Play {
         }
     }
 
-    /// `now` is the raw clock (visuals); `jnow` has the calibration offset
-    /// applied and drives everything that judges the player.
-    pub fn update(&mut self, now: f64, jnow: f64, snd: &Sounds, engine: &AudioEngine) {
+    /// `jnow` is the judged clock (raw audio clock minus the calibration
+    /// offset). It drives everything the player sees and is judged against, so
+    /// the highway lines up with the strike line at the perfect-press moment.
+    pub fn update(&mut self, jnow: f64, snd: &Sounds, engine: &AudioEngine) {
         let dt = get_frame_time();
         let g = geom();
 
         // Visual pulse on each beat (beat times come from the tempo map)
-        while self.next_beat < self.beats.len() && self.beats[self.next_beat] <= now {
+        while self.next_beat < self.beats.len() && self.beats[self.next_beat] <= jnow {
             self.beat_flash = 1.0;
             self.next_beat += 1;
         }
@@ -969,6 +970,8 @@ impl Play {
         draw_circle(hand.x, hand.y, 4.0 * s, a);
     }
 
+    /// `now` here is the judged clock (calibration offset already applied), so
+    /// the highway and strike line agree with where notes are judged.
     pub fn draw(&self, now: f64) {
         let g = geom();
         let h = screen_height();

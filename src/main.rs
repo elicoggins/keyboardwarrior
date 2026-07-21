@@ -1323,7 +1323,7 @@ async fn main() {
                 if is_key_pressed(KeyCode::Escape) {
                     play.paused = !play.paused;
                     if play.paused {
-                        play.pause_now = engine.timeline_pos();
+                        play.pause_now = engine.timeline_pos() - calib_offset();
                     }
                     engine.set_paused(play.paused);
                     engine.play(&sounds.hat, 0.4);
@@ -1391,14 +1391,18 @@ async fn main() {
                     continue;
                 }
                 // The audio hardware's frame counter is the game clock; the
-                // judged clock additionally carries the calibration offset
+                // judged clock additionally carries the calibration offset.
+                // The highway is drawn on the judged clock too, so a gem sits
+                // on the strike line at the moment a perfect press is expected
+                // — with headphone latency dialed in, that's also when you hear
+                // the note. Only the real audio playback runs on the raw clock.
                 let now = engine.timeline_pos();
                 let jnow = now - calib_offset();
                 while let Some(c) = get_char_pressed() {
                     play.handle_char(c, jnow, &sounds, &engine);
                 }
-                play.update(now, jnow, &sounds, &engine);
-                play.draw(now);
+                play.update(jnow, &sounds, &engine);
+                play.draw(jnow);
 
                 if play.finished(now) {
                     engine.stop_timeline();
