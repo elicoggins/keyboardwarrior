@@ -34,6 +34,12 @@ pub fn text_mode() -> TextMode {
     TEXT_MODES[TEXT_MODE_IDX.load(Ordering::Relaxed) % TEXT_MODES.len()].0
 }
 
+/// Stable label for the current text mode, used to scope persisted state
+/// (like high scores) per mode.
+pub fn text_mode_label() -> &'static str {
+    TEXT_MODES[TEXT_MODE_IDX.load(Ordering::Relaxed) % TEXT_MODES.len()].1
+}
+
 // Word pools indexed by length - 1. In WORDS mode a phrase with N notes gets
 // a word with N letters, so typing a word IS playing a lick. Pools are large
 // and dealt from a reshuffling deck, so repeats are rare and never adjacent.

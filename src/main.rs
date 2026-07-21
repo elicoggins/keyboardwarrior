@@ -1105,10 +1105,9 @@ async fn main() {
                     // rows (which are packed too tight for a fourth detail line).
                     #[cfg(not(target_arch = "wasm32"))]
                     if selected && focus > 0.5 {
-                        if let Some(b) = diff_opts
-                            .get(*diff_sel)
-                            .and_then(|&(d, _)| scores.best(&song.title, &song.artist, d))
-                        {
+                        if let Some(b) = diff_opts.get(*diff_sel).and_then(|&(d, _)| {
+                            scores.best(&song.title, &song.artist, d, words::text_mode_label())
+                        }) {
                             let bsize = 15.0 * k;
                             let txt = format!("best {}  ·  {:.1}%", b.score, b.accuracy);
                             let dims = msize(&txt, bsize);
@@ -1525,6 +1524,7 @@ async fn main() {
                             &play.title,
                             &artist,
                             play.song_ref.diff,
+                            words::text_mode_label(),
                             config::BestScore {
                                 score: play.score,
                                 accuracy: play.accuracy(),

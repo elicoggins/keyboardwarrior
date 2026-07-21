@@ -261,9 +261,9 @@ pub struct Scores {
     path: Option<PathBuf>,
 }
 
-fn score_key(title: &str, artist: &str, diff: usize) -> String {
+fn score_key(title: &str, artist: &str, diff: usize, mode: &str) -> String {
     // Unit-separator delimited so ordinary titles/artists can't collide.
-    format!("{title}\u{1f}{artist}\u{1f}{diff}")
+    format!("{title}\u{1f}{artist}\u{1f}{diff}\u{1f}{mode}")
 }
 
 impl Scores {
@@ -277,15 +277,22 @@ impl Scores {
         Scores { map, path }
     }
 
-    /// The stored best for a song+difficulty, if one exists.
-    pub fn best(&self, title: &str, artist: &str, diff: usize) -> Option<BestScore> {
-        self.map.get(&score_key(title, artist, diff)).copied()
+    /// The stored best for a song+difficulty+mode, if one exists.
+    pub fn best(&self, title: &str, artist: &str, diff: usize, mode: &str) -> Option<BestScore> {
+        self.map.get(&score_key(title, artist, diff, mode)).copied()
     }
 
     /// Record a finished run, replacing the stored best only when it scores
     /// higher (or none existed). Persists on change.
-    pub fn record(&mut self, title: &str, artist: &str, diff: usize, run: BestScore) -> Recorded {
-        let key = score_key(title, artist, diff);
+    pub fn record(
+        &mut self,
+        title: &str,
+        artist: &str,
+        diff: usize,
+        mode: &str,
+        run: BestScore,
+    ) -> Recorded {
+        let key = score_key(title, artist, diff, mode);
         let prev_best = self.map.get(&key).map(|b| b.score);
         let improved = prev_best.is_none_or(|p| run.score > p);
         if improved {
@@ -343,22 +350,28 @@ mod tests {
         let run = |score| BestScore { score, accuracy: 90.0, max_combo: 10 };
 
         // First clear: improved, but there's no prior score to have beaten.
-        let first = s.record("Song", "Artist", 3, run(1000));
+        let first = s.record("Song", "Artist", 3, "WORDS", run(1000));
         assert!(first.improved && first.prev_best.is_none());
-        assert_eq!(s.best("Song", "Artist", 3).map(|b| b.score), Some(1000));
+        assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(1000));
 
         // A worse (or equal) run doesn't move the record.
-        assert!(!s.record("Song", "Artist", 3, run(800)).improved);
-        assert!(!s.record("Song", "Artist", 3, run(1000)).improved);
-        assert_eq!(s.best("Song", "Artist", 3).map(|b| b.score), Some(1000));
+        assert!(!s.record("Song", "Artist", 3, "WORDS", run(800)).improved);
+        assert!(!s.record("Song", "Artist", 3, "WORDS", run(1000)).improved);
+        assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(1000));
 
         // A better run improves and reports the score it beat.
-        let better = s.record("Song", "Artist", 3, run(1500));
+        let better = s.record("Song", "Artist", 3, "WORDS", run(1500));
         assert!(better.improved && better.prev_best == Some(1000));
-        assert_eq!(s.best("Song", "Artist", 3).map(|b| b.score), Some(1500));
+        assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(1500));
 
         // Another difficulty of the same song keeps its own record.
-        assert!(s.best("Song", "Artist", 2).is_none());
+        assert!(s.best("Song", "Artist", 2, "WORDS").is_none());
+
+        // A different mode on the same song+difficulty keeps its own record.
+        assert!(s.best("Song", "Artist", 3, "DFJK").is_none());
+        s.record("Song", "Artist", 3, "DFJK", run(50));
+        assert_eq!(s.best("Song", "Artist", 3, "DFJK").map(|b| b.score), Some(50));
+        assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(1500));
     }
 
     /// The whole point of this module: an extra folder full of .sng files is
