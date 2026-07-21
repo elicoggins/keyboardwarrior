@@ -204,11 +204,22 @@ struct ChorusScene {
     net: Option<Receiver<ChorusMsg>>, // in-flight search/download, if any
     busy: &'static str,               // "" idle, else "searching…" / "downloading…"
     note: Option<String>,             // last error/status shown on the screen
+    // Pagination: enchor.us returns one page per call, so scrolling to the
+    // bottom pulls the next page and appends it. These describe the results
+    // currently loaded, so a page fetch can repeat the same query.
+    page: u32,                 // highest page loaded (0 before any search)
+    more: bool,                // another page might exist
+    query_active: String,      // query the loaded results belong to
+    diff_active: Option<String>, // difficulty the loaded results belong to
+    more_net: Option<Receiver<ChorusMsg>>, // in-flight next-page fetch, if any
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 enum ChorusMsg {
-    Results(Result<Vec<chorus::Hit>, String>),
+    Results(Result<chorus::SearchPage, String>),
+    // An appended page. `page` is validated against what's loaded so a stale
+    // fetch (from a query since replaced) is ignored.
+    MorePage { page: u32, res: Result<chorus::SearchPage, String> },
     Downloaded(Result<String, String>), // Ok(title) once saved into songs/
 }
 
@@ -815,6 +826,11 @@ async fn main() {
                         net: None,
                         busy: "",
                         note: None,
+                        page: 0,
+                        more: false,
+                        query_active: String::new(),
+                        diff_active: None,
+                        more_net: None,
                     }));
                     // Swallow the 'g' that opened this screen so it doesn't land
                     // in the search box on the next frame.
@@ -1185,7 +1201,7 @@ async fn main() {
                     Item::stat(Cap::Txt("M"), "MODE", mode_name),
                     Item::stat(Cap::Txt("V"), "SPEED", speed),
                     Item::stat(Cap::Txt("T"), "THEME", th().name),
-                    Item::stat(Cap::Txt("C"), "OFFSET", format!("{off_ms:+} ms")),
+                    Item::stat(Cap::Txt("C"), "CALIBRATE", format!("{off_ms:+} ms")),
                     Item::stat(
                         Cap::Pair("-", "+"),
                         "VOLUME",
@@ -1210,7 +1226,7 @@ async fn main() {
                     Item::act(Cap::Txt("A"), "add folder"),
                     Item::act(Cap::Txt("F"), "open folder"),
                     Item::act(Cap::Txt("R"), "rescan"),
-                    Item::act(Cap::Txt("G"), "download"),
+                    Item::act(Cap::Txt("G"), "get songs"),
                     Item::act(Cap::Txt("DEL"), "remove"),
                 ];
                 #[cfg(not(target_arch = "wasm32"))]
@@ -1866,14 +1882,21 @@ async fn main() {
                             cs.busy = "";
                             cs.net = None;
                             match res {
-                                Ok(hits) => {
-                                    cs.note = (hits.is_empty()).then(|| "no matches".to_string());
-                                    cs.hits = hits;
+                                Ok(sp) => {
+                                    cs.note =
+                                        (sp.hits.is_empty()).then(|| "no matches".to_string());
+                                    cs.hits = sp.hits;
+                                    cs.page = 1;
+                                    cs.more = sp.has_more;
                                     cs.sel = 0;
                                     cs.scroll = 0;
                                 }
                                 Err(e) => cs.note = Some(e),
                             }
+                        }
+                        Ok(ChorusMsg::MorePage { .. }) => {
+                            // The search/download channel never carries a page;
+                            // pages arrive on `more_net`, drained below.
                         }
                         Ok(ChorusMsg::Downloaded(res)) => {
                             cs.busy = "";
@@ -1906,6 +1929,46 @@ async fn main() {
                     }
                 }
 
+                // Drain a completed next-page fetch. This runs on its own
+                // channel so paging never blocks browsing the results already
+                // on screen (unlike search/download, which gate input).
+                if let Some(rx) = &cs.more_net {
+                    match rx.try_recv() {
+                        Ok(ChorusMsg::MorePage { page, res }) => {
+                            cs.more_net = None;
+                            match res {
+                                // Only accept the page that follows what's
+                                // loaded; a stale one (query since replaced) is
+                                // dropped. Dedupe by md5 so a server that clamps
+                                // an out-of-range page to the last one can't
+                                // append the same hits forever — a page that
+                                // adds nothing new ends the paging.
+                                Ok(sp) if page == cs.page + 1 => {
+                                    let before = cs.hits.len();
+                                    for h in sp.hits {
+                                        if !cs.hits.iter().any(|e| e.md5 == h.md5) {
+                                            cs.hits.push(h);
+                                        }
+                                    }
+                                    let added = cs.hits.len() - before;
+                                    cs.page = page;
+                                    cs.more = sp.has_more && added > 0;
+                                }
+                                Ok(_) => {}
+                                // A page fetch that failed just stops paging;
+                                // the results already loaded stay put.
+                                Err(_) => cs.more = false,
+                            }
+                        }
+                        Ok(_) => cs.more_net = None,
+                        Err(TryRecvError::Disconnected) => {
+                            cs.more_net = None;
+                            cs.more = false;
+                        }
+                        Err(TryRecvError::Empty) => {}
+                    }
+                }
+
                 let idle = cs.net.is_none();
                 if is_key_pressed(KeyCode::Escape) {
                     let m = cs.menu_sel;
@@ -1927,6 +1990,14 @@ async fn main() {
                         cs.busy = "searching...";
                         cs.note = None;
                         cs.focus = ChorusFocus::Search;
+                        // Fresh search: remember what it's for so paging can
+                        // repeat it, and drop any next-page fetch still in
+                        // flight for the previous query.
+                        cs.query_active = q.clone();
+                        cs.diff_active = diff.clone();
+                        cs.page = 0;
+                        cs.more = false;
+                        cs.more_net = None;
                         let (tx, rx) = channel();
                         std::thread::spawn(move || {
                             let _ =
@@ -2021,6 +2092,22 @@ async fn main() {
                                 cs.scroll = cs.sel;
                             } else if cs.sel >= cs.scroll + visible {
                                 cs.scroll = cs.sel + 1 - visible;
+                            }
+                            // Reaching the bottom of what's loaded pulls the next
+                            // page in the background. It appends, so the list keeps
+                            // growing as you scroll; the guard on `more_net` keeps
+                            // one fetch in flight at a time.
+                            let at_bottom = cs.scroll + visible >= cs.hits.len();
+                            if at_bottom && cs.more && cs.more_net.is_none() {
+                                let next = cs.page + 1;
+                                let q = cs.query_active.clone();
+                                let diff = cs.diff_active.clone();
+                                let (tx, rx) = channel();
+                                std::thread::spawn(move || {
+                                    let res = chorus::search(&q, next, diff.as_deref());
+                                    let _ = tx.send(ChorusMsg::MorePage { page: next, res });
+                                });
+                                cs.more_net = Some(rx);
                             }
                             if is_key_pressed(KeyCode::Enter) && cs.sel < cs.hits.len() {
                                 // Download the highlighted hit.
@@ -2174,6 +2261,17 @@ async fn main() {
                         w,
                         thumb_h,
                         wa(th().secondary, 0.7),
+                    );
+                }
+
+                // A quiet cue that another page is on the way, so the list
+                // growing under the user doesn't read as a glitch.
+                if cs.more_net.is_some() {
+                    draw_centered(
+                        "loading more...",
+                        screen_height() - 72.0 * k,
+                        16.0 * k,
+                        wa(th().secondary, 0.6),
                     );
                 }
 

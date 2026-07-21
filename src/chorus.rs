@@ -16,6 +16,14 @@ use serde::Deserialize;
 const SEARCH_URL: &str = "https://api.enchor.us/search";
 const UA: &str = "KeyboardWarrior/0.1 (+https://github.com/eli-cog/keyboardwarrior)";
 
+/// One page of search results. `has_more` is true when the page came back
+/// non-empty, so another page may exist — the caller keeps paging until a page
+/// adds no new hits (see the search screen's "load more" trigger in main.rs).
+pub struct SearchPage {
+    pub hits: Vec<Hit>,
+    pub has_more: bool,
+}
+
 /// One search hit — just the fields the menu shows and the download needs.
 pub struct Hit {
     pub name: String,
@@ -75,8 +83,10 @@ fn neg_one() -> i32 {
 /// instrument=guitar so the API actually narrows to charts that have a guitar
 /// track at that tier. Returns hits that have a usable md5 (a few charts are
 /// zip-only and can't be pulled as a .sng — those are dropped so every listed
-/// result is downloadable).
-pub fn search(query: &str, page: u32, difficulty: Option<&str>) -> Result<Vec<Hit>, String> {
+/// result is downloadable), plus `has_more` so the caller can page for the
+/// rest: enchor.us caps each response at one page, so a single call never
+/// returns the full match set.
+pub fn search(query: &str, page: u32, difficulty: Option<&str>) -> Result<SearchPage, String> {
     // A difficulty filter only bites when an instrument is set; guitar is what
     // this game plays, so scope the filter to guitar.
     let instrument = difficulty.map(|_| "guitar");
@@ -98,6 +108,10 @@ pub fn search(query: &str, page: u32, difficulty: Option<&str>) -> Result<Vec<Hi
         .map_err(|e| net_error("search", e))?;
     let parsed: SearchResp =
         resp.into_json().map_err(|e| format!("couldn't read search results: {e}"))?;
+    // A non-empty page means there might be another; the caller stops once a
+    // page adds no new hits. Measured before the md5 filter so a page that's
+    // all zip-only charts still counts as "there was more here".
+    let has_more = !parsed.data.is_empty();
     let hits = parsed
         .data
         .into_iter()
@@ -110,7 +124,7 @@ pub fn search(query: &str, page: u32, difficulty: Option<&str>) -> Result<Vec<Hi
             diff_guitar: s.diff_guitar,
         })
         .collect();
-    Ok(hits)
+    Ok(SearchPage { hits, has_more })
 }
 
 /// Download the hit's .sng into `dest_dir`, named "Artist - Title.sng" (falling
@@ -199,16 +213,16 @@ mod tests {
     #[test]
     #[ignore]
     fn live_search_and_download() {
-        let hits = search("code monkey jonathan coulton", 1, None).expect("search should succeed");
-        assert!(!hits.is_empty(), "expected at least one hit");
-        assert!(hits.iter().all(|h| !h.md5.is_empty()));
+        let page = search("code monkey jonathan coulton", 1, None).expect("search should succeed");
+        assert!(!page.hits.is_empty(), "expected at least one hit");
+        assert!(page.hits.iter().all(|h| !h.md5.is_empty()));
 
         // The difficulty filter narrows to guitar charts at that tier.
         let easy = search("nirvana", 1, Some("easy")).expect("filtered search");
         let all = search("nirvana", 1, None).expect("unfiltered search");
-        assert!(easy.len() <= all.len(), "filter should not widen results");
+        assert!(easy.hits.len() <= all.hits.len(), "filter should not widen results");
         let dir = std::env::temp_dir().join("kw_chorus_test");
-        let path = download(&hits[0], &dir).expect("download should succeed");
+        let path = download(&page.hits[0], &dir).expect("download should succeed");
         let head = std::fs::read(&path).expect("saved file readable");
         assert_eq!(&head[..6], b"SNGPKG", "downloaded a real .sng container");
         let _ = std::fs::remove_file(&path);
