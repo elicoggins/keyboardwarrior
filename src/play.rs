@@ -1394,9 +1394,17 @@ impl Play {
         let rcx = g.left + g.width + (screen_width() - g.left - g.width) / 2.0;
         let col_w = (g.left - 28.0 * k).max(60.0 * k);
         let sp_on = self.sp_active(now);
+        // Gutter text goes gold with the rest of the star power dressing
+        let gut = |a: f32| {
+            if sp_on && sp_fx() {
+                wa(th().accent, a)
+            } else {
+                Color::new(1.0, 1.0, 1.0, a)
+            }
+        };
 
-        draw_fit("SCORE", lcx, 106.0 * k, 15.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.35));
-        draw_fit(&format!("{}", self.score), lcx, 146.0 * k, 42.0 * k, col_w, WHITE);
+        draw_fit("SCORE", lcx, 106.0 * k, 15.0 * k, col_w, gut(0.35));
+        draw_fit(&format!("{}", self.score), lcx, 146.0 * k, 42.0 * k, col_w, gut(1.0));
         let mult_color = if sp_on { wa(th().accent, 1.0) } else { wa(th().accent, 0.9) };
         draw_fit(
             &format!("x{}", self.multiplier(now)),
@@ -1420,9 +1428,11 @@ impl Play {
             };
             draw_strike_line(&g, ox, oy, 4.0 * k, wa(th().accent, 0.8 * flicker));
             // The highway edges catch the same gold, flickering in step
-            let edge = wa(th().accent, 0.8 * flicker);
-            for x in [g.left + ox, g.left + g.width + ox] {
-                draw_line(x, 0.0, x, h, 3.0 * k, edge);
+            if sp_fx() {
+                let edge = wa(th().accent, 0.8 * flicker);
+                for x in [g.left + ox, g.left + g.width + ox] {
+                    draw_line(x, 0.0, x, h, 3.0 * k, edge);
+                }
             }
         }
         // Ignition: one soft gold pulse over the highway, gone in half a
@@ -1458,10 +1468,10 @@ impl Play {
             }
         }
 
-        draw_fit(&self.title, rcx, 106.0 * k, 22.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.85));
-        draw_fit(&self.diff_name, rcx, 130.0 * k, 16.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.45));
+        draw_fit(&self.title, rcx, 106.0 * k, 22.0 * k, col_w, gut(0.85));
+        draw_fit(&self.diff_name, rcx, 130.0 * k, 16.0 * k, col_w, gut(0.45));
         let acc_text = format!("{:.1} %", self.accuracy());
-        draw_fit(&acc_text, rcx, 174.0 * k, 30.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.85));
+        draw_fit(&acc_text, rcx, 174.0 * k, 30.0 * k, col_w, gut(0.85));
 
         // Song completion, down in the right gutter instead of across the top
         let resolved = self.notes.iter().filter(|n| n.state != NoteState::Pending).count();
@@ -1471,7 +1481,7 @@ impl Play {
         draw_rectangle(rcx - pw / 2.0, py, pw, 4.0 * k, Color::new(1.0, 1.0, 1.0, 0.12));
         draw_rectangle(rcx - pw / 2.0, py, pw * frac, 4.0 * k, wa(th().secondary, 0.8));
         let pct = format!("{:.0}%", frac * 100.0);
-        draw_fit(&pct, rcx, 228.0 * k, 15.0 * k, col_w, Color::new(1.0, 1.0, 1.0, 0.4));
+        draw_fit(&pct, rcx, 228.0 * k, 15.0 * k, col_w, gut(0.4));
 
         // Combo
         if self.combo >= 4 {
