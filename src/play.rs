@@ -902,7 +902,7 @@ impl Play {
         // Eased bar position for the tail's bow, mirroring the audio ramp
         self.whammy_vis += ((whammy as i32 as f32) - self.whammy_vis) * (1.0 - (-dt * 13.0).exp());
 
-        // Star power ambience: gold flecks drift up the highway while it
+        // Star power ambience: gold flecks drift up the screen while it
         // burns; the moment it dies the lead's reverb send is released
         // (its tail rings out in the mixer)
         let sp_on = self.sp_active(jnow);
@@ -911,10 +911,13 @@ impl Play {
         }
         self.sp_prev = sp_on;
         if sp_on && sp_fx() {
-            self.spark_acc += dt * 26.0;
+            // Flecks cover the whole screen, gutters included; the spawn rate
+            // scales with the extra area so the highway doesn't look thinner
+            let sw = screen_width();
+            self.spark_acc += dt * 26.0 * (sw / g.width).max(1.0);
             while self.spark_acc >= 1.0 {
                 self.spark_acc -= 1.0;
-                let x = macroquad::rand::gen_range(g.left, g.left + g.width);
+                let x = macroquad::rand::gen_range(0.0, sw);
                 let y = macroquad::rand::gen_range(g.top, g.hit_y);
                 let life = macroquad::rand::gen_range(0.35f32, 0.8);
                 self.particles.push(Particle {
@@ -1416,6 +1419,11 @@ impl Play {
                 1.0
             };
             draw_strike_line(&g, ox, oy, 4.0 * k, wa(th().accent, 0.8 * flicker));
+            // The highway edges catch the same gold, flickering in step
+            let edge = wa(th().accent, 0.8 * flicker);
+            for x in [g.left + ox, g.left + g.width + ox] {
+                draw_line(x, 0.0, x, h, 3.0 * k, edge);
+            }
         }
         // Ignition: one soft gold pulse over the highway, gone in half a
         // second

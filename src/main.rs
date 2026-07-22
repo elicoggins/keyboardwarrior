@@ -1640,7 +1640,7 @@ async fn main() {
                 draw_strip(
                     &[&[
                         Item::act(Cap::Txt("R"), "play again"),
-                        Item::act(Cap::Txt("Q / ESC"), "menu"),
+                        Item::act(Cap::Txt("ENTER"), "menu"),
                     ]],
                     screen_height() - 30.0 * k - s.height() / 2.0,
                     screen_width() - FOOTER_INSET * 2.0 * k,
