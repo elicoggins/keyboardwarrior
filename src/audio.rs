@@ -58,6 +58,10 @@ enum Cmd {
     /// Whammy bar position 0..1: 1 holds the lead bent-down and doubled
     /// (fatter), 0 releases it back to the plain stem.
     SetWhammy(f32),
+    /// Star power reverb send 0..1 — how much of the LEAD stem feeds the
+    /// hall. Lead only: the backing (vocals, drums, …) is premixed and
+    /// always plays dry. Smoothed in the callback; the tail rings out.
+    SetSpFx(f32),
     /// Freeze or resume the timeline (and everything scheduled on it).
     SetPaused(bool),
     StopTimeline,
@@ -89,6 +93,103 @@ struct ClockSmooth {
     init: bool,
 }
 
+// ------------------------------------------------------- star power reverb
+//
+// A small Freeverb-shaped hall for the lead stem while star power burns:
+// eight damped combs and three allpass diffusers per channel, the right
+// channel's lines a few samples longer for stereo width. Deliberately
+// quiet — a touch of air behind the guitar, not a room around the mix.
+
+const VERB_FB: f32 = 0.82; // comb feedback: tail just over a second
+const VERB_DAMP: f32 = 0.35; // highs roll off each repeat
+const VERB_IN: f32 = 0.015; // input scaling ahead of the comb bank
+const VERB_LEVEL: f32 = 1.0; // overall wet level — the subtlety knob
+
+struct Comb {
+    buf: Vec<f32>,
+    i: usize,
+    store: f32, // one-pole lowpass state in the feedback path
+}
+
+impl Comb {
+    fn new(len: usize) -> Comb {
+        Comb { buf: vec![0.0; len], i: 0, store: 0.0 }
+    }
+    fn tick(&mut self, x: f32) -> f32 {
+        let y = self.buf[self.i];
+        self.store = y + (self.store - y) * VERB_DAMP;
+        self.buf[self.i] = x + self.store * VERB_FB;
+        self.i += 1;
+        if self.i == self.buf.len() {
+            self.i = 0;
+        }
+        y
+    }
+}
+
+struct Allpass {
+    buf: Vec<f32>,
+    i: usize,
+}
+
+impl Allpass {
+    fn new(len: usize) -> Allpass {
+        Allpass { buf: vec![0.0; len], i: 0 }
+    }
+    fn tick(&mut self, x: f32) -> f32 {
+        let b = self.buf[self.i];
+        self.buf[self.i] = x + b * 0.5;
+        self.i += 1;
+        if self.i == self.buf.len() {
+            self.i = 0;
+        }
+        b - x
+    }
+}
+
+struct Reverb {
+    combs_l: Vec<Comb>,
+    combs_r: Vec<Comb>,
+    aps_l: Vec<Allpass>,
+    aps_r: Vec<Allpass>,
+}
+
+impl Reverb {
+    fn new(rate: f64) -> Reverb {
+        // Freeverb's classic tunings (in seconds of delay), scaled to the
+        // device rate; the right channel runs 23 samples behind the left
+        const COMBS: [f64; 8] =
+            [0.02532, 0.02694, 0.02896, 0.03075, 0.03225, 0.03381, 0.03530, 0.03667];
+        const APS: [f64; 3] = [0.01261, 0.01000, 0.00773];
+        let len = |sec: f64, spread: usize| (sec * rate) as usize + spread + 1;
+        Reverb {
+            combs_l: COMBS.iter().map(|&s| Comb::new(len(s, 0))).collect(),
+            combs_r: COMBS.iter().map(|&s| Comb::new(len(s, 23))).collect(),
+            aps_l: APS.iter().map(|&s| Allpass::new(len(s, 0))).collect(),
+            aps_r: APS.iter().map(|&s| Allpass::new(len(s, 23))).collect(),
+        }
+    }
+
+    fn tick(&mut self, l: f32, r: f32) -> (f32, f32) {
+        let (fl, fr) = (l * VERB_IN, r * VERB_IN);
+        let mut ol = 0.0;
+        for c in &mut self.combs_l {
+            ol += c.tick(fl);
+        }
+        let mut or_ = 0.0;
+        for c in &mut self.combs_r {
+            or_ += c.tick(fr);
+        }
+        for a in &mut self.aps_l {
+            ol = a.tick(ol);
+        }
+        for a in &mut self.aps_r {
+            or_ = a.tick(or_);
+        }
+        (ol * VERB_LEVEL, or_ * VERB_LEVEL)
+    }
+}
+
 /// The mixer state and per-buffer DSP, shared by every backend: commands
 /// arrive over a channel, `process` fills interleaved f32 frames and
 /// advances the global frame counter.
@@ -97,6 +198,9 @@ struct Mixer {
     sample_rate: f64,
     voices: Vec<Voice>,
     timeline: Option<Timeline>,
+    verb: Reverb,
+    sp_wet: f32,        // star power reverb send, smoothed in the callback
+    sp_wet_target: f32, // where the send is headed
     cur_master: f32,
     frames: Arc<AtomicU64>,
     timeline_start: Arc<AtomicU64>,
@@ -121,6 +225,9 @@ impl Mixer {
             sample_rate: sample_rate as f64,
             voices: Vec::with_capacity(64),
             timeline: None,
+            verb: Reverb::new(sample_rate as f64),
+            sp_wet: 0.0,
+            sp_wet_target: 0.0,
             cur_master: f32::from_bits(master.load(Ordering::Relaxed)),
             frames,
             timeline_start,
@@ -162,6 +269,8 @@ impl Mixer {
                     retire(&self.garbage, self.timeline.take());
                     // Unplayed one-shots from the old timeline die with it
                     self.voices.retain(|v| !v.scheduled || v.pos > 0);
+                    // A fresh run never inherits the last one's reverb send
+                    self.sp_wet_target = 0.0;
                     self.timeline = Some(Timeline {
                         start_frame,
                         backing,
@@ -185,6 +294,9 @@ impl Mixer {
                         t.whammy_target = a.clamp(0.0, 1.0);
                     }
                 }
+                Cmd::SetSpFx(a) => {
+                    self.sp_wet_target = a.clamp(0.0, 1.0);
+                }
                 Cmd::SetPaused(p) => {
                     if let Some(t) = self.timeline.as_mut() {
                         t.paused = p;
@@ -193,6 +305,7 @@ impl Mixer {
                 Cmd::StopTimeline => {
                     retire(&self.garbage, self.timeline.take());
                     self.voices.retain(|v| !v.scheduled || v.pos > 0);
+                    self.sp_wet_target = 0.0;
                 }
             }
         }
@@ -208,6 +321,8 @@ impl Mixer {
         // so the pitch dives and recovers GH-style. Bar travel is
         // eased over ~80 ms so press and release both glide.
         let whammy_k = 1.0 - (-1.0 / (0.08 * sample_rate as f32)).exp();
+        // ~0.25 s ease on the star power reverb send
+        let wet_k = 1.0 - (-1.0 / (0.25 * sample_rate as f32)).exp();
         let wh_win = 0.06 * sample_rate as f32; // grain window, samples
         const WH_BEND: f32 = 0.09; // ~1.6 semitones down at full dive
         let master_target = f32::from_bits(self.master.load(Ordering::Relaxed));
@@ -217,6 +332,11 @@ impl Mixer {
             let gf = start + i as u64;
             let mut l = 0.0f32;
             let mut r = 0.0f32;
+            // The lead stem's contribution this frame — the reverb's feed.
+            // Lead only: the backing is a premixed bus (vocals, drums, …)
+            // and a hall around the whole band reads as mud, not an effect.
+            let mut fx_l = 0.0f32;
+            let mut fx_r = 0.0f32;
 
             if let Some(t) = self.timeline.as_mut() {
                 if !t.paused && gf >= t.start_frame {
@@ -256,9 +376,19 @@ impl Mixer {
                         };
                         l += s[0] * t.lead_gain;
                         r += s[1] * t.lead_gain;
+                        fx_l = s[0] * t.lead_gain;
+                        fx_r = s[1] * t.lead_gain;
                     }
                 }
             }
+
+            // Star power reverb: ticked every frame (a silent feed is a
+            // handful of multiplies) so the tail rings out naturally when
+            // the power ends instead of being cut off.
+            self.sp_wet += (self.sp_wet_target - self.sp_wet) * wet_k;
+            let (vl, vr) = self.verb.tick(fx_l * self.sp_wet, fx_r * self.sp_wet);
+            l += vl;
+            r += vr;
 
             for v in self.voices.iter_mut() {
                 if gf >= v.start_frame && !(paused && v.scheduled) {
@@ -461,6 +591,12 @@ impl AudioEngine {
         let _ = self.tx.send(Cmd::SetWhammy(amt));
     }
 
+    /// Star power reverb send (0..1) on the lead stem: 1 while the power
+    /// burns, 0 otherwise. Eased in the callback; the tail rings out.
+    pub fn set_sp_fx(&self, amt: f32) {
+        let _ = self.tx.send(Cmd::SetSpFx(amt));
+    }
+
     /// Master volume, 0..1.
     pub fn master(&self) -> f32 {
         f32::from_bits(self.master.load(Ordering::Relaxed))
@@ -636,6 +772,7 @@ pub struct Sounds {
     pub kick: Buf,
     pub hat: Buf,
     pub miss: Buf,
+    pub sp_start: Buf, // star power ignition — a soft thump under a short air swell
 }
 
 // ---------------------------------------------------------------- audio synth
@@ -684,5 +821,18 @@ pub fn make_sounds(rate: u32) -> Sounds {
         square * (-t * 14.0).exp() * 0.30
     });
 
-    Sounds { kick, hat, miss }
+    // Star power ignition: a soft low thump under a short breath of air —
+    // it marks the moment without stealing it from the music
+    let lp = std::cell::Cell::new(0.0f32);
+    let sp_start = synth(rate, 0.5, |t| {
+        let n = noise();
+        let mut l = lp.get();
+        l += (n - l) * 0.06;
+        lp.set(l);
+        let air = l * 2.0 * (t * 9.0).min(1.0) * (-((t - 0.15).max(0.0)) * 8.0).exp();
+        let thump = (TAU * 70.0 * t).sin() * (-t * 18.0).exp();
+        air * 0.35 + thump * 0.4
+    });
+
+    Sounds { kick, hat, miss, sp_start }
 }

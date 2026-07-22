@@ -6,7 +6,7 @@ use macroquad::prelude::*;
 use crate::audio::{self, AudioEngine, Buf, Sounds};
 use crate::chart::{Instrument, SongChart, DIFF_NAMES};
 use crate::gfx::{draw_fit, dtext, msize, ui};
-use crate::settings::approach;
+use crate::settings::{approach, sp_fx};
 use crate::theme::{mix, th, wa};
 use crate::words::{chart_seed, generate_text, text_mode, TextMode};
 
@@ -211,6 +211,9 @@ pub struct Play {
     sp_phrases: Vec<SpPhrase>,
     energy: f32,
     sp_until: f64,
+    sp_prev: bool,  // was SP active last update — releases the reverb on expiry
+    sp_flash: f32,  // soft gold pulse over the highway at ignition
+    spark_acc: f32, // fractional gold sparks carried between frames
     word_anim: f32, // eased index of the current word, drives the word queue
     spb: f64,
     pub score: i64,
@@ -573,6 +576,9 @@ impl Play {
             // NEG_INFINITY, not -1: the clock is negative during the
             // count-in, and `now < sp_until` must not read as active there
             sp_until: f64::NEG_INFINITY,
+            sp_prev: false,
+            sp_flash: 0.0,
+            spark_acc: 0.0,
             word_anim: 0.0,
             spb,
             score: 0,
@@ -664,13 +670,23 @@ impl Play {
                 self.sp_until = now + self.energy as f64 * 16.0;
                 self.energy = 0.0;
                 let g = geom();
+                let cx = g.left + g.width / 2.0;
                 self.float_text(
                     "STAR POWER!",
-                    vec2(g.left + g.width / 2.0, g.hit_y - 130.0),
+                    vec2(cx, g.hit_y - 130.0),
                     wa(th().accent, 1.0),
                     44.0,
                 );
-                engine.play(&snd.kick, 0.6);
+                // The ignition stays understated: one soft gold pulse over
+                // the highway, a quiet thump, and a touch of hall behind
+                // the lead — the drifting sparks carry it from there.
+                // All of it sits behind the settings toggle; the scoring
+                // and the gold state indicators don't.
+                if sp_fx() {
+                    self.sp_flash = 1.0;
+                    engine.play(&snd.sp_start, 0.8);
+                    engine.set_sp_fx(1.0);
+                }
             }
             return;
         }
@@ -732,13 +748,19 @@ impl Play {
                     Judgement::Great => self.great += 1,
                     Judgement::Good => self.good += 1,
                 }
-                // Star power phrase progress: complete a phrase cleanly to
-                // bank energy
+                // Star power phrase progress: complete a phrase cleanly —
+                // every note hit, none missed — to bank energy. Completing
+                // one while the power is already burning feeds the flame
+                // instead: the same quarter-bar lands as extra seconds.
                 if let Some(p) = self.notes[i].sp_phrase {
                     let ph = &mut self.sp_phrases[p as usize];
                     ph.hits += 1;
                     if !ph.broken && ph.hits == ph.len {
-                        self.energy = (self.energy + 0.25).min(1.0);
+                        if self.sp_active(now) {
+                            self.sp_until = (self.sp_until + 0.25 * 16.0).min(now + 16.0);
+                        } else {
+                            self.energy = (self.energy + 0.25).min(1.0);
+                        }
                         let g2 = geom();
                         self.float_text(
                             "STAR POWER +",
@@ -879,6 +901,36 @@ impl Play {
         }
         // Eased bar position for the tail's bow, mirroring the audio ramp
         self.whammy_vis += ((whammy as i32 as f32) - self.whammy_vis) * (1.0 - (-dt * 13.0).exp());
+
+        // Star power ambience: gold flecks drift up the highway while it
+        // burns; the moment it dies the lead's reverb send is released
+        // (its tail rings out in the mixer)
+        let sp_on = self.sp_active(jnow);
+        if self.sp_prev && !sp_on {
+            engine.set_sp_fx(0.0);
+        }
+        self.sp_prev = sp_on;
+        if sp_on && sp_fx() {
+            self.spark_acc += dt * 26.0;
+            while self.spark_acc >= 1.0 {
+                self.spark_acc -= 1.0;
+                let x = macroquad::rand::gen_range(g.left, g.left + g.width);
+                let y = macroquad::rand::gen_range(g.top, g.hit_y);
+                let life = macroquad::rand::gen_range(0.35f32, 0.8);
+                self.particles.push(Particle {
+                    pos: vec2(x, y),
+                    vel: vec2(
+                        macroquad::rand::gen_range(-18.0f32, 18.0) * g.k,
+                        -macroquad::rand::gen_range(60.0f32, 170.0) * g.k,
+                    ),
+                    life,
+                    max_life: life,
+                    size: macroquad::rand::gen_range(1.5f32, 3.2) * g.k,
+                    color: mix(th().accent, WHITE, macroquad::rand::gen_range(0.0f32, 0.5)),
+                });
+            }
+        }
+        self.sp_flash = (self.sp_flash - 2.0 * dt).max(0.0);
 
         // The guitarist follows the lead stem: while it's ducked after a
         // miss he stands slumped; the next clean hit winds him back up
@@ -1142,7 +1194,11 @@ impl Play {
                     glow.a = 0.08 + 0.20 * closeness;
                     draw_circle(pos.x, pos.y, radius * (1.25 + 0.17 * closeness), glow);
                     draw_circle(pos.x, pos.y, radius, mix(th().bg, lane_c, 0.16));
-                    let ring = if n.sp_phrase.is_some() { th().accent } else { lane_c };
+                    // Gold styling only while the chain is still alive: a
+                    // missed note breaks the phrase and its remaining gems
+                    // fall back to plain lane colors
+                    let sp_live = n.sp_phrase.is_some_and(|p| !self.sp_phrases[p as usize].broken);
+                    let ring = if sp_live { th().accent } else { lane_c };
                     draw_circle_lines(
                         pos.x,
                         pos.y,
@@ -1150,7 +1206,7 @@ impl Play {
                         2.5 * k,
                         wa(ring, 0.75 + 0.25 * closeness),
                     );
-                    if n.sp_phrase.is_some() {
+                    if sp_live {
                         draw_circle_lines(
                             pos.x,
                             pos.y,
@@ -1348,10 +1404,23 @@ impl Play {
             mult_color,
         );
 
-        // Star power: gold wash while active, energy meter when banked
+        // Star power: the sparks carry the mood — the only steady marker
+        // is the strike line turning gold, flickering nervously through
+        // the last second and a half so the player feels the drain
         if sp_on {
-            draw_rectangle(g.left + ox, 0.0, g.width, h, wa(th().accent, 0.05));
-            draw_strike_line(&g, ox, oy, 4.0, wa(th().accent, 0.8));
+            let remaining = (self.sp_until - now) as f32;
+            let flicker = if remaining < 1.5 {
+                let ph = ((now * 11.0).sin() * 0.5 + 0.5) as f32;
+                (remaining / 1.5).clamp(0.0, 1.0) * (0.45 + 0.55 * ph) + 0.25
+            } else {
+                1.0
+            };
+            draw_strike_line(&g, ox, oy, 4.0 * k, wa(th().accent, 0.8 * flicker));
+        }
+        // Ignition: one soft gold pulse over the highway, gone in half a
+        // second
+        if self.sp_flash > 0.0 {
+            draw_rectangle(g.left + ox, 0.0, g.width, h, wa(th().accent, 0.08 * self.sp_flash));
         }
         if self.energy > 0.0 || sp_on {
             let bar_w = col_w.min(170.0 * k);

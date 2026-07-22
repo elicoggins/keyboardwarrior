@@ -27,6 +27,15 @@ pub const CALIB_PERIOD: f64 = 0.5;
 // Subtracted from the clock when judging keypresses (visuals stay raw).
 pub static CALIB_MS: AtomicI64 = AtomicI64::new(0);
 
+// Star power effects: the ignition pulse and thump, the drifting gold
+// sparks, and the lead reverb while the power burns. Scoring and the
+// gold state indicators (meter, strike line) are untouched either way.
+pub static SP_FX: AtomicBool = AtomicBool::new(true);
+
+pub fn sp_fx() -> bool {
+    SP_FX.load(Ordering::Relaxed)
+}
+
 pub fn calib_offset() -> f64 {
     CALIB_MS.load(Ordering::Relaxed) as f64 / 1000.0
 }
@@ -43,6 +52,7 @@ pub enum SettingRow {
     PracPunct,
     Theme,
     Speed,
+    SpFx,
     Volume,
     Calibrate,
 }
@@ -82,6 +92,7 @@ pub fn settings_lines() -> Vec<SettingLine> {
         Section("HIGHWAY"),
         Row(SettingRow::Speed),
         Row(SettingRow::Theme),
+        Row(SettingRow::SpFx),
         Section("AUDIO & TIMING"),
         Row(SettingRow::Volume),
         Row(SettingRow::Calibrate),
@@ -129,6 +140,7 @@ impl SettingRow {
             SettingRow::PracPunct => "punctuation",
             SettingRow::Theme => "theme",
             SettingRow::Speed => "speed",
+            SettingRow::SpFx => "star power fx",
             SettingRow::Volume => "volume",
             SettingRow::Calibrate => "calibrate",
         }
@@ -158,6 +170,7 @@ impl SettingRow {
             SettingRow::PracHome => &PRAC_HOME,
             SettingRow::PracBottom => &PRAC_BOTTOM,
             SettingRow::PracPunct => &PRAC_PUNCT,
+            SettingRow::SpFx => &SP_FX,
             _ => return None,
         };
         Some(b.load(Ordering::Relaxed))
@@ -190,6 +203,7 @@ impl SettingRow {
             SettingRow::Speed => {
                 SPEEDS[SPEED_IDX.load(Ordering::Relaxed) % SPEEDS.len()].0.to_string()
             }
+            SettingRow::SpFx => on_off(&SP_FX).into(),
             SettingRow::Volume => format!("{:.0}%", engine.master() * 100.0),
             SettingRow::Calibrate => format!("{:+} ms", CALIB_MS.load(Ordering::Relaxed)),
         }
@@ -206,6 +220,7 @@ impl SettingRow {
             SettingRow::PracPunct => flip(&PRAC_PUNCT),
             SettingRow::Theme => cycle(&THEME_IDX, THEMES.len(), dir),
             SettingRow::Speed => cycle(&SPEED_IDX, SPEEDS.len(), dir),
+            SettingRow::SpFx => flip(&SP_FX),
             SettingRow::Volume => {
                 engine.set_master(((engine.master() + 0.05 * dir as f32) * 20.0).round() / 20.0);
             }
@@ -229,6 +244,7 @@ impl SettingRow {
             SettingRow::PracPunct => "comma, period, apostrophe - shift is never needed",
             SettingRow::Theme => "lane and accent colors",
             SettingRow::Speed => "how long notes stay on the highway",
+            SettingRow::SpFx => "the pulse, sparks, and reverb when star power fires",
             SettingRow::Volume => "master volume - also -/+ from anywhere",
             SettingRow::Calibrate => "ENTER: tap along to measure your keyboard latency",
         }

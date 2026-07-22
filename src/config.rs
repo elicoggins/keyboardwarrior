@@ -13,7 +13,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use serde::{Deserialize, Serialize};
 
 use crate::audio::AudioEngine;
-use crate::settings::{CALIB_MS, SPEEDS, SPEED_IDX};
+use crate::settings::{CALIB_MS, SPEEDS, SPEED_IDX, SP_FX};
 use crate::theme::{THEMES, THEME_IDX};
 use crate::words::{
     PRAC_BOTTOM, PRAC_HOME, PRAC_LEFT, PRAC_PUNCT, PRAC_RIGHT, PRAC_TOP, TEXT_MODES, TEXT_MODE_IDX,
@@ -173,6 +173,8 @@ pub struct SettingsFile {
     pub prac_bottom: bool,
     #[serde(default = "yes")]
     pub prac_punct: bool,
+    #[serde(default = "yes")]
+    pub sp_fx: bool,
 }
 
 fn default_speed() -> usize {
@@ -200,6 +202,7 @@ pub fn settings_snapshot(engine: &AudioEngine) -> SettingsFile {
         prac_home: PRAC_HOME.load(Relaxed),
         prac_bottom: PRAC_BOTTOM.load(Relaxed),
         prac_punct: PRAC_PUNCT.load(Relaxed),
+        sp_fx: SP_FX.load(Relaxed),
     }
 }
 
@@ -221,6 +224,7 @@ pub fn load_settings(engine: &AudioEngine) {
     PRAC_HOME.store(s.prac_home, Relaxed);
     PRAC_BOTTOM.store(s.prac_bottom, Relaxed);
     PRAC_PUNCT.store(s.prac_punct, Relaxed);
+    SP_FX.store(s.sp_fx, Relaxed);
 }
 
 /// Persist a settings snapshot. Best-effort: any IO error is swallowed (the

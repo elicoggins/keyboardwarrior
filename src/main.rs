@@ -600,17 +600,18 @@ async fn main() {
                     next_frame().await;
                     continue;
                 }
-                // Search bar: `;` opens a filter over the list. While it's open,
-                // typing edits the query and the letter hotkeys below are
-                // suspended so they don't fire as text; Escape closes and clears
-                // it, Backspace erases, every other printable key types.
+                // Search bar: `;` toggles a filter over the list. While it's
+                // open, typing edits the query and the letter hotkeys below are
+                // suspended so they don't fire as text; Escape or `;` closes and
+                // clears it, Backspace erases, every other printable key types.
                 if let Some(q) = menu_search.as_mut() {
                     // Only printable ASCII reaches the query — the font atlas
                     // holds ' '..='~' only, so arrow keys and other special keys
                     // (delivered by get_char_pressed as non-printable chars that
-                    // slip past is_control) would otherwise draw as tofu.
+                    // slip past is_control) would otherwise draw as tofu. `;` is
+                    // the close hotkey, so it never types into the query.
                     while let Some(c) = get_char_pressed() {
-                        if (' '..='~').contains(&c) {
+                        if c != ';' && (' '..='~').contains(&c) {
                             q.push(c);
                         }
                     }
@@ -618,10 +619,10 @@ async fn main() {
                         q.pop();
                     }
                 }
-                // Escape closes the bar, `;` opens it — both reassign
+                // Escape or `;` closes the bar, `;` opens it — all reassign
                 // `menu_search`, so they sit outside the `as_mut()` borrow above.
                 if menu_search.is_some() {
-                    if is_key_pressed(KeyCode::Escape) {
+                    if is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::Semicolon) {
                         menu_search = None;
                     }
                 } else if is_key_pressed(KeyCode::Escape) && pick.is_some() {
@@ -1570,7 +1571,10 @@ async fn main() {
             }
 
             Scene::Results(r) => {
-                if is_key_pressed(KeyCode::Enter) || is_key_pressed(KeyCode::Escape) {
+                if is_key_pressed(KeyCode::Enter)
+                    || is_key_pressed(KeyCode::Escape)
+                    || is_key_pressed(KeyCode::Q)
+                {
                     let sel = r.song_ref.song;
                     let diff_sel = diff_pos(&songs, sel, r.song_ref.diff);
                     scene = Scene::Menu { sel, diff_sel, scroll: sel as f32, pick: None };
@@ -1636,7 +1640,7 @@ async fn main() {
                 draw_strip(
                     &[&[
                         Item::act(Cap::Txt("R"), "play again"),
-                        Item::act(Cap::Txt("ENTER"), "menu"),
+                        Item::act(Cap::Txt("Q / ESC"), "menu"),
                     ]],
                     screen_height() - 30.0 * k - s.height() / 2.0,
                     screen_width() - FOOTER_INSET * 2.0 * k,
