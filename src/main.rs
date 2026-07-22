@@ -207,10 +207,10 @@ struct ChorusScene {
     // Pagination: enchor.us returns one page per call, so scrolling to the
     // bottom pulls the next page and appends it. These describe the results
     // currently loaded, so a page fetch can repeat the same query.
-    page: u32,                 // highest page loaded (0 before any search)
-    more: bool,                // another page might exist
-    query_active: String,      // query the loaded results belong to
-    diff_active: Option<String>, // difficulty the loaded results belong to
+    page: u32,                             // highest page loaded (0 before any search)
+    more: bool,                            // another page might exist
+    query_active: String,                  // query the loaded results belong to
+    diff_active: Option<String>,           // difficulty the loaded results belong to
     more_net: Option<Receiver<ChorusMsg>>, // in-flight next-page fetch, if any
 }
 
@@ -1709,7 +1709,12 @@ async fn main() {
                 // Both exits land back where the player came from: the menu
                 // (C hotkey) or the settings screen's calibrate row
                 let back = if cal.from_menu {
-                    Scene::Menu { sel: cal.menu_sel, diff_sel: 0, scroll: cal.menu_sel as f32, pick: None }
+                    Scene::Menu {
+                        sel: cal.menu_sel,
+                        diff_sel: 0,
+                        scroll: cal.menu_sel as f32,
+                        pick: None,
+                    }
                 } else {
                     Scene::Settings {
                         sel: settings_rows()
@@ -1912,8 +1917,12 @@ async fn main() {
                                         .unwrap_or(0);
                                     toast =
                                         Some(Toast::new(format!("added {title} to your library")));
-                                    scene =
-                                        Scene::Menu { sel: at, diff_sel: 0, scroll: at as f32, pick: None };
+                                    scene = Scene::Menu {
+                                        sel: at,
+                                        diff_sel: 0,
+                                        scroll: at as f32,
+                                        pick: None,
+                                    };
                                     next_frame().await;
                                     continue;
                                 }

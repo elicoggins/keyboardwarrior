@@ -360,7 +360,9 @@ pub fn generate_text(groups: &[usize]) -> Vec<String> {
                 })
                 .collect()
         }
-        TextMode::Dfjk => groups.iter().map(|&len| random_word(len, &['d', 'f', 'j', 'k'])).collect(),
+        TextMode::Dfjk => {
+            groups.iter().map(|&len| random_word(len, &['d', 'f', 'j', 'k'])).collect()
+        }
         TextMode::Practice => {
             let keys = practice_keys();
             groups.iter().map(|&len| random_word(len, &keys)).collect()
