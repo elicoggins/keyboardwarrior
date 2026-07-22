@@ -33,7 +33,9 @@ pub fn text_mode() -> TextMode {
 }
 
 /// Stable label for the current text mode, used to scope persisted state
-/// (like high scores) per mode.
+/// (like high scores) per mode. Only the native build persists scores; the
+/// wasm demo has no store, so this would be dead code there.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn text_mode_label() -> &'static str {
     TEXT_MODES[TEXT_MODE_IDX.load(Ordering::Relaxed) % TEXT_MODES.len()].1
 }
