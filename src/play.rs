@@ -331,6 +331,39 @@ fn beat_interval_at(beats: &[f64], t: f64) -> f64 {
     (beats[i] - beats[i - 1]).clamp(0.2, 1.5)
 }
 
+/// The longest word a phrase can carry (the word pools go up to 8 letters).
+const MAX_WORD: usize = 8;
+
+/// Deal one run of notes (no internal rests) out as word-sized phrases.
+/// A run that fits a word is one phrase. A longer run has to split, and a
+/// blind cut at 8 can land mid-figure — Code Monkey's hard chart is triplet
+/// cells (gaps 0.19 0.19 0.38 repeating), where straight 8s end every word
+/// on the first note of the next cell. So each cut prefers the farthest
+/// rhythmic seam — a gap noticeably wider than the run's tightest spacing —
+/// within word range, and words end where the music breathes (that triplet
+/// run deals 6s). A run with no seams (an even stream) or nothing but seams
+/// still cuts at 8, so this only kicks in where the chart has real cells.
+fn split_run(run: Vec<(f64, f64)>, out: &mut Vec<Vec<(f64, f64)>>) {
+    if run.len() <= MAX_WORD {
+        out.push(run);
+        return;
+    }
+    let gaps: Vec<f64> = run.windows(2).map(|w| w[1].0 - w[0].0).collect();
+    let base = gaps.iter().fold(f64::INFINITY, |a, &b| a.min(b)).max(0.05);
+    // seam[i]: the gap after note i is wide enough to end a word at
+    let seams: Vec<bool> = gaps.iter().map(|&g| g > base * 1.45).collect();
+    let mut start = 0;
+    while run.len() - start > MAX_WORD {
+        let end = (start + 3..=start + MAX_WORD)
+            .rev()
+            .find(|&e| seams[e - 1])
+            .unwrap_or(start + MAX_WORD);
+        out.push(run[start..end].to_vec());
+        start = end;
+    }
+    out.push(run[start..].to_vec());
+}
+
 /// Stream the text's letters onto note (time, sustain) pairs in order: letter
 /// k of the text rides note k. Word boundaries drive the on-screen word queue.
 fn assign_letters(words: &[String], times: &[(f64, f64)]) -> Vec<Note> {
@@ -372,24 +405,31 @@ impl Play {
     ) -> Self {
         let times: Vec<(f64, f64)> = chart.diffs[diff].iter().map(|n| (n.time, n.len)).collect();
 
-        // Group notes into phrases at musical rests (or when a word maxes out)
-        let mut groups: Vec<Vec<(f64, f64)>> = Vec::new();
+        // Group notes into runs at musical rests, then deal each run out as
+        // word-sized phrases, cutting long runs at their rhythmic seams
+        let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
         for &(t, len) in &times {
-            let new_group = match groups.last().and_then(|g| g.last()) {
-                Some(&(prev, _)) => t - prev > 0.85 || groups.last().unwrap().len() >= 8,
+            let new_run = match runs.last().and_then(|g| g.last()) {
+                Some(&(prev, _)) => t - prev > 0.85,
                 None => true,
             };
-            if new_group {
-                groups.push(Vec::new());
+            if new_run {
+                runs.push(Vec::new());
             }
-            groups.last_mut().unwrap().push((t, len));
+            runs.last_mut().unwrap().push((t, len));
+        }
+        let mut groups: Vec<Vec<(f64, f64)>> = Vec::new();
+        for run in runs {
+            split_run(run, &mut groups);
         }
         // Fold lonely single-note groups into the previous word when close
         let mut merged: Vec<Vec<(f64, f64)>> = Vec::new();
         for g in groups {
             match merged.last_mut() {
                 Some(prev)
-                    if g.len() == 1 && prev.len() < 8 && g[0].0 - prev.last().unwrap().0 < 1.6 =>
+                    if g.len() == 1
+                        && prev.len() < MAX_WORD
+                        && g[0].0 - prev.last().unwrap().0 < 1.6 =>
                 {
                     prev.extend(g);
                 }
@@ -1427,6 +1467,110 @@ impl Results {
             70..=84 => ("B", wa(th().secondary, 1.0)),
             50..=69 => ("C", Color::new(0.9, 0.6, 0.3, 1.0)),
             _ => ("D", Color::new(0.9, 0.35, 0.35, 1.0)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod phrase_tests {
+    use super::*;
+
+    /// Feed split_run a gap pattern and get back the phrase sizes it deals.
+    fn split_gaps(gaps: &[f64]) -> Vec<usize> {
+        let mut t = 0.0;
+        let mut run = vec![(0.0, 0.0)];
+        for &g in gaps {
+            t += g;
+            run.push((t, 0.0));
+        }
+        let mut out = Vec::new();
+        split_run(run, &mut out);
+        out.iter().map(|g| g.len()).collect()
+    }
+
+    #[test]
+    fn even_streams_still_deal_eights() {
+        // No internal structure: the classic 8-letter cut is unchanged
+        assert_eq!(split_gaps(&[0.19; 68]), vec![8, 8, 8, 8, 8, 8, 8, 8, 5]);
+        assert_eq!(split_gaps(&[0.19; 7]), vec![8]);
+        assert_eq!(split_gaps(&[0.5; 11]), vec![8, 4]);
+    }
+
+    #[test]
+    fn triplet_cells_deal_cell_multiples() {
+        // Code Monkey hard: 3-note cells, seam gap twice the inner gap.
+        // Words end at cell boundaries (6s), never straddling into the next
+        let mut gaps = Vec::new();
+        for _ in 0..7 {
+            gaps.extend([0.19, 0.19, 0.38]);
+        }
+        gaps.extend([0.19, 0.19]); // final cell ends at the rest
+        assert_eq!(split_gaps(&gaps), vec![6, 6, 6, 6]);
+    }
+
+    #[test]
+    fn cuts_land_on_seams_not_mid_figure() {
+        // A tight 4-note figure among slower notes: the cut may not split it
+        let gaps = [0.56, 0.19, 0.56, 0.19, 0.56, 0.19, 0.19, 0.19, 0.38, 0.56, 0.19, 0.56, 0.19];
+        let lens = split_gaps(&gaps);
+        assert_eq!(lens.iter().sum::<usize>(), gaps.len() + 1);
+        // Every word boundary sits on a seam (a gap > 0.28), never inside
+        // the 0.19-gap figure at notes 5..=8
+        let mut i = 0;
+        for &l in &lens[..lens.len() - 1] {
+            i += l;
+            assert!(gaps[i - 1] > 0.28, "cut after note {} lands mid-figure", i - 1);
+        }
+    }
+
+    #[test]
+    fn degenerate_runs_fall_back_to_eights() {
+        // One stray flam makes every other gap read as a seam: farthest
+        // "seam" in range is just the full word, so eights survive
+        let mut gaps = vec![0.05];
+        gaps.extend([0.19; 20]);
+        assert_eq!(split_gaps(&gaps), vec![8, 8, 6]);
+    }
+
+    /// The motivating chart: Code Monkey on hard is triplet cells. The dealt
+    /// phrases must end on cell boundaries, not straddle them the way blind
+    /// 8-cuts did (this loads the bundled .sng, skipped if absent).
+    #[test]
+    fn code_monkey_hard_words_ride_whole_triplets() {
+        let path = std::path::Path::new("songs/Code Monkey.sng");
+        if !path.exists() {
+            return;
+        }
+        let source = crate::chart::SongSource::Sng(path.to_path_buf());
+        let charts = crate::chart::load_song(&source).expect("bundled song should parse");
+        let chart = crate::chart::pick_chart(charts, crate::chart::Instrument::Guitar)
+            .expect("guitar chart");
+        let times: Vec<(f64, f64)> = chart.diffs[2].iter().map(|n| (n.time, n.len)).collect();
+        let mut runs: Vec<Vec<(f64, f64)>> = Vec::new();
+        for &(t, len) in &times {
+            let new_run = match runs.last().and_then(|g| g.last()) {
+                Some(&(prev, _)) => t - prev > 0.85,
+                None => true,
+            };
+            if new_run {
+                runs.push(Vec::new());
+            }
+            runs.last_mut().unwrap().push((t, len));
+        }
+        for run in runs.into_iter().filter(|r| r.len() > MAX_WORD) {
+            let gaps: Vec<f64> = run.windows(2).map(|w| w[1].0 - w[0].0).collect();
+            let mut out = Vec::new();
+            split_run(run, &mut out);
+            let mut i = 0;
+            for g in &out[..out.len() - 1] {
+                i += g.len();
+                // Every cut lands on a wide gap, never inside a triplet cell
+                assert!(
+                    gaps[i - 1] > 0.28,
+                    "cut after note {i} splits a cell (gap {:.2})",
+                    gaps[i - 1]
+                );
+            }
         }
     }
 }
