@@ -1109,12 +1109,13 @@ impl Play {
         // Sustain holds: bonus score drips in while the key stays down.
         // Lifting early just stops the bonus — no combo break, like GH.
         // SHIFT is the whammy bar: holding it keeps the lead bent down and
-        // fattened, releasing returns it to normal. While pressed on a
-        // sustain it also doubles the drip and trickles star power.
+        // fattened, releasing returns it to normal. It's a lead-guitar
+        // flourish only — it never changes score — but whammying a star
+        // power sustain trickles extra energy (see below).
         // (No whammy bar in the browser demo — real app only.)
         let shift = !cfg!(target_arch = "wasm32")
             && (is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift));
-        let mult = self.multiplier(jnow) as f32 * if shift { 2.0 } else { 1.0 };
+        let mult = self.multiplier(jnow) as f32;
         let mut holds = std::mem::take(&mut self.holds);
         let mut bonus = 0i64;
         let mut done: Vec<usize> = Vec::new();
@@ -1138,8 +1139,17 @@ impl Play {
             self.burst(vec2(x, g.hit_y), th().lane[self.notes[i].lane], 8);
         }
         self.holds = holds;
+        // The whammy bends any sustain, but only star power sustains feed the
+        // meter: energy trickles in while whammying a held note whose phrase
+        // is still intact.
         let whammy = shift && !self.holds.is_empty();
-        if whammy {
+        let sp_whammy = whammy
+            && self.holds.iter().any(|h| {
+                self.notes[h.note]
+                    .sp_phrase
+                    .is_some_and(|p| !self.sp_phrases[p as usize].broken)
+            });
+        if sp_whammy {
             self.energy = (self.energy + dt * 0.05).min(1.0);
         }
         if whammy != self.whammying {
