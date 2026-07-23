@@ -662,9 +662,15 @@ async fn main() {
                 }
                 // Escape or `;` closes the bar, `;` opens it — all reassign
                 // `menu_search`, so they sit outside the `as_mut()` borrow above.
+                // Closing the bar restores the full list, which moves the
+                // selection's position within `view` (and so its scroll target)
+                // by a big jump. Snap the wheel there instead of easing across
+                // the whole gap, so it just rebuilds around the current song.
+                let mut snap_scroll = false;
                 if menu_search.is_some() {
                     if is_key_pressed(KeyCode::Escape) || is_key_pressed(KeyCode::Semicolon) {
                         menu_search = None;
+                        snap_scroll = true;
                     }
                 } else if is_key_pressed(KeyCode::Escape) && pick.is_some() {
                     // Back out of the guitar/bass chooser to difficulty selection.
@@ -917,6 +923,10 @@ async fn main() {
                     if let Some(instrument) = instrument {
                         engine.play(&sounds.kick, 0.5);
                         toast = None;
+                        // Close the filter bar so it isn't still open (with its
+                        // stale query) when we come back to the menu; `;` reopens
+                        // it fresh.
+                        menu_search = None;
                         let wants_practice = shift || practice_arm;
                         practice_arm = false;
                         if wants_practice && !songs[row].sections.is_empty() {
@@ -1033,7 +1043,11 @@ async fn main() {
                 // eases toward the selection's position within it, not its
                 // full-list index — otherwise a filter would scroll off-screen.
                 let sel_pos = view.iter().position(|&i| i == *sel).unwrap_or(0) as f32;
-                *scroll += (sel_pos - *scroll) * (1.0 - (-dtf * 12.0).exp());
+                if snap_scroll {
+                    *scroll = sel_pos;
+                } else {
+                    *scroll += (sel_pos - *scroll) * (1.0 - (-dtf * 12.0).exp());
+                }
                 // Every piece of chrome around the band is scaled, which is
                 // what keeps the band itself usable. The header and the
                 // legend/hints below it used to be fixed pixel blocks totalling
@@ -1605,6 +1619,9 @@ async fn main() {
                     play.paused = !play.paused;
                     if play.paused {
                         play.pause_now = engine.timeline_pos() - calib_offset();
+                        // The pause loop draws without updating, so a shake in
+                        // progress would never decay — settle it now.
+                        play.calm();
                     }
                     engine.set_paused(play.paused);
                     engine.play(&sounds.hat, 0.4);

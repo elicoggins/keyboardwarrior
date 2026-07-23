@@ -1220,6 +1220,13 @@ impl Play {
         self.practice.is_none() && now > self.end_time + 1.0
     }
 
+    /// Stop the screen shake immediately. The pause loop draws but never runs
+    /// `update`, which is what decays the shake — so a miss right before a
+    /// pause would jitter the frozen frame forever without this.
+    pub fn calm(&mut self) {
+        self.shake = 0.0;
+    }
+
     fn hits(&self) -> u32 {
         self.perfect + self.great + self.good
     }

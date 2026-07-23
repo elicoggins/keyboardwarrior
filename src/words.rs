@@ -156,7 +156,7 @@ const WORDS_BY_LEN: [&[&str]; 8] = [
         "gentle", "ginger", "golden", "guitar", "hammer", "harbor", "helmet", "hidden", "hollow",
         "honest", "hunter", "indigo", "insect", "jacket", "jaguar", "jungle", "kettle", "kitten",
         "ladder", "lagoon", "laptop", "legend", "lively", "lizard", "locker", "lumber", "magnet",
-        "marble", "meadow", "melody", "mellow", "mirror", "mitten", "modest", "monkey", "mosaic",
+        "marble", "meadow", "melody", "mellow", "mirror", "mitten", "modest", "monkey",
         "mother", "muffin", "museum", "mystic", "native", "nectar", "noodle", "nugget", "oyster",
         "paddle", "palace", "parade", "pastel", "pebble", "pencil", "pepper", "picnic", "pigeon",
         "pillow", "pirate", "planet", "pocket", "polish", "pollen", "poster", "potato", "pretty",
