@@ -35,6 +35,17 @@ impl Instrument {
     }
 }
 
+/// A named practice section (the charter's "Verse 1" / "Solo" markers), with
+/// its span resolved: each section runs to the next one's start, the last to
+/// the chart's end. Practice mode picks a run of these to loop.
+#[derive(Clone)]
+pub struct Section {
+    pub name: String,
+    pub start: f64,
+    pub end: f64,
+}
+
+#[derive(Clone)]
 pub struct SongChart {
     pub title: String,
     pub artist: String,
@@ -42,6 +53,7 @@ pub struct SongChart {
     pub diffs: [Vec<ChartNote>; 4], // easy, medium, hard, expert
     pub sp: [Vec<(f64, f64)>; 4],   // star power phrases (start, end) per difficulty
     pub beats: Vec<f64>,            // beat times for grid/pulse rendering
+    pub sections: Vec<Section>,     // practice sections, never empty for a playable chart
     pub end: f64,
 }
 
@@ -114,6 +126,9 @@ pub struct SongEntry {
     pub artist: String,
     pub available: Vec<usize>, // difficulty indices playable by at least one chart
     pub charts: Vec<ChartInfo>, // per-instrument note counts, for the chart picker
+    // Practice sections, captured at scan time so the picker can open from
+    // the menu without loading the song.
+    pub sections: Vec<Section>,
     // A non-playable signpost row (the browser demo's "download to expand
     // library" entry): drawn dimmed, skipped by menu navigation.
     pub locked: bool,
@@ -167,6 +182,66 @@ fn beats_until(map: &TempoMap, tpq: f64, max_tick: u64) -> Vec<f64> {
     beats
 }
 
+// ---------------------------------------------------------------- sections
+
+/// A section marker's display name from a chart event: `section Verse 1`
+/// (GH-style) or `prc_verse_1` (RB-style). None for unrelated events
+/// (lyrics, phrase markers, lighting cues, ...).
+fn section_event_name(text: &str) -> Option<String> {
+    let t = text.trim();
+    let raw = if let Some(rest) = t.strip_prefix("section") {
+        // The separator matters: "sections" or "section_foo" vs "section foo"
+        rest.strip_prefix([' ', '_'])?.to_string()
+    } else if let Some(rest) = t.strip_prefix("prc_") {
+        rest.replace('_', " ")
+    } else {
+        return None;
+    };
+    // The font atlas only holds printable ASCII — anything else would draw
+    // as a missing-glyph box in the picker, so it's dropped here.
+    let name: String =
+        raw.chars().map(|c| if (' '..='~').contains(&c) { c } else { ' ' }).collect();
+    let name = name.trim().to_string();
+    Some(if name.is_empty() { "section".into() } else { name })
+}
+
+/// Resolve section markers into spans, sorted with each section running to
+/// the next one's start. A chart with no markers gets synthesized 8-measure
+/// "PART n" chunks on the beat grid, so practice mode always has sections
+/// to offer.
+fn build_sections(
+    mut starts: Vec<(f64, String)>,
+    beats: &[f64],
+    first_note: f64,
+    end: f64,
+) -> Vec<Section> {
+    starts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    starts.dedup_by(|a, b| (a.0 - b.0).abs() < 1e-6);
+    starts.retain(|(t, _)| *t < end - 0.05);
+    if starts.is_empty() {
+        // Anchor the chunks on the beat the notes come in on; beats are
+        // quarter notes, so 32 of them is 8 measures of 4/4.
+        let mut i = beats.partition_point(|&b| b <= first_note).saturating_sub(1);
+        let mut n = 1;
+        while i < beats.len() && beats[i] < end - 0.05 {
+            starts.push((beats[i], format!("PART {n}")));
+            n += 1;
+            i += 32;
+        }
+        if starts.is_empty() {
+            starts.push((0.0, "FULL SONG".into()));
+        }
+    }
+    let ends: Vec<f64> = (0..starts.len())
+        .map(|i| starts.get(i + 1).map(|s| s.0).unwrap_or(end).max(starts[i].0 + 0.001))
+        .collect();
+    starts
+        .into_iter()
+        .zip(ends)
+        .map(|((start, name), end)| Section { name, start: start.max(0.0), end })
+        .collect()
+}
+
 // ---------------------------------------------------------------- .mid
 
 pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<Vec<SongChart>, String> {
@@ -200,6 +275,9 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<Vec<SongChart>, String> {
         first: u64,
     }
     let mut candidates: Vec<TrackData> = Vec::new();
+    // Section markers: `[section Verse 1]` / `[prc_...]` text events, normally
+    // on the EVENTS track — but collected from any track to be safe.
+    let mut section_marks: Vec<(u64, String)> = Vec::new();
     for track in &smf.tracks {
         let mut name = String::new();
         let mut tick = 0u64;
@@ -213,6 +291,16 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<Vec<SongChart>, String> {
             match ev.kind {
                 midly::TrackEventKind::Meta(midly::MetaMessage::TrackName(n)) => {
                     name = String::from_utf8_lossy(n).to_string();
+                }
+                midly::TrackEventKind::Meta(midly::MetaMessage::Text(t)) => {
+                    let text = String::from_utf8_lossy(t);
+                    if let Some(inner) =
+                        text.trim().strip_prefix('[').and_then(|x| x.strip_suffix(']'))
+                    {
+                        if let Some(n) = section_event_name(inner) {
+                            section_marks.push((tick, n));
+                        }
+                    }
                 }
                 midly::TrackEventKind::Midi { message, .. } => match message {
                     midly::MidiMessage::NoteOn { key, vel } if vel.as_int() > 0 => {
@@ -291,6 +379,11 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<Vec<SongChart>, String> {
 
         let beats = beats_until(&map, tpq, max_tick + (tpq as u64) * 8);
         let end = diffs.iter().flat_map(|d| d.iter()).map(|n| n.time + n.len).fold(0.0, f64::max);
+        let first_note =
+            diffs.iter().filter_map(|d| d.first()).map(|n| n.time).fold(f64::INFINITY, f64::min);
+        let starts: Vec<(f64, String)> =
+            section_marks.iter().map(|(t, n)| (map.sec(*t) + delay, n.clone())).collect();
+        let sections = build_sections(starts, &beats, first_note, end);
         Some(SongChart {
             title: String::new(),
             artist: String::new(),
@@ -298,6 +391,7 @@ pub fn parse_mid(bytes: &[u8], delay: f64) -> Result<Vec<SongChart>, String> {
             diffs,
             sp,
             beats,
+            sections,
             end,
         })
     };
@@ -401,11 +495,36 @@ pub fn parse_chart(text: &str, delay: f64) -> Result<Vec<SongChart>, String> {
         return Err("no [..Single] guitar sections with notes".into());
     }
 
+    // Section markers: `tick = E "section Verse 1"` lines in [Events]
+    let mut section_marks: Vec<(f64, String)> = Vec::new();
+    if let Some(events) = get("Events") {
+        for l in events {
+            let Some((tick, rest)) = l.split_once('=') else { continue };
+            let Ok(t) = tick.trim().parse::<u64>() else { continue };
+            let Some(text) = rest.trim().strip_prefix('E') else { continue };
+            if let Some(n) = section_event_name(text.trim().trim_matches('"')) {
+                section_marks.push((map.sec(t) + delay, n));
+            }
+        }
+    }
+
     let beats = beats_until(&map, resolution, max_tick + resolution as u64 * 8);
     let end = diffs.iter().flat_map(|d| d.iter()).map(|n| n.time + n.len).fold(0.0, f64::max);
+    let first_note =
+        diffs.iter().filter_map(|d| d.first()).map(|n| n.time).fold(f64::INFINITY, f64::min);
+    let sections = build_sections(section_marks, &beats, first_note, end);
     // The .chart "Single" track is lead guitar by definition — this format
     // carries no bass chart the game reads, so there's only ever one option.
-    Ok(vec![SongChart { title, artist, instrument: Instrument::Guitar, diffs, sp, beats, end }])
+    Ok(vec![SongChart {
+        title,
+        artist,
+        instrument: Instrument::Guitar,
+        diffs,
+        sp,
+        beats,
+        sections,
+        end,
+    }])
 }
 
 // ---------------------------------------------------------------- loading
@@ -587,6 +706,7 @@ pub fn scan_songs(root: &Path) -> Vec<SongEntry> {
             title: name.clone(),
             artist: String::new(),
             available: Vec::new(),
+            sections: Vec::new(),
             source,
             locked: false,
             error: Some(msg),
@@ -605,6 +725,7 @@ pub fn scan_songs(root: &Path) -> Vec<SongEntry> {
                     artist,
                     available,
                     charts: chart_infos(&charts),
+                    sections: charts.first().map(|c| c.sections.clone()).unwrap_or_default(),
                     source,
                     locked: false,
                     error: None,
@@ -732,6 +853,76 @@ mod sng_tests {
             buf.len() as f64 / 48000.0
         );
         assert!(buf.len() as f64 / 48000.0 > 200.0, "should be a full-length song");
+    }
+}
+
+#[cfg(test)]
+mod section_tests {
+    use super::*;
+
+    #[test]
+    fn section_events_parse_both_styles() {
+        assert_eq!(section_event_name("section Verse 1").as_deref(), Some("Verse 1"));
+        assert_eq!(section_event_name("prc_gtr_solo_1").as_deref(), Some("gtr solo 1"));
+        assert_eq!(section_event_name("section_intro").as_deref(), Some("intro"));
+        assert!(section_event_name("phrase_start").is_none());
+        assert!(section_event_name("lyric hello").is_none());
+        assert!(section_event_name("sections").is_none());
+    }
+
+    #[test]
+    fn charted_markers_chain_into_spans() {
+        let starts =
+            vec![(10.0, "Intro".to_string()), (5.0, "Zero".to_string()), (20.0, "Out".to_string())];
+        let s = build_sections(starts, &[], 0.0, 30.0);
+        let got: Vec<(&str, f64, f64)> =
+            s.iter().map(|x| (x.name.as_str(), x.start, x.end)).collect();
+        assert_eq!(got, vec![("Zero", 5.0, 10.0), ("Intro", 10.0, 20.0), ("Out", 20.0, 30.0)]);
+    }
+
+    #[test]
+    fn markerless_charts_get_synthesized_parts() {
+        // Beats every 0.5s for 100s; notes start at 3.2s, chart ends at 60s.
+        let beats: Vec<f64> = (0..200).map(|i| i as f64 * 0.5).collect();
+        let s = build_sections(Vec::new(), &beats, 3.2, 60.0);
+        assert!(!s.is_empty());
+        assert_eq!(s[0].name, "PART 1");
+        // Anchored on the beat at/before the first note, 32 beats (16s) apart
+        assert!((s[0].start - 3.0).abs() < 1e-9);
+        assert!((s[1].start - 19.0).abs() < 1e-9);
+        // Sections chain: each ends where the next starts, the last at `end`
+        for w in s.windows(2) {
+            assert_eq!(w[0].end, w[1].start);
+        }
+        assert_eq!(s.last().unwrap().end, 60.0);
+    }
+
+    /// Every bundled song must come out of the loader with usable, ordered
+    /// practice sections (charted or synthesized).
+    #[test]
+    fn bundled_songs_expose_sections() {
+        for name in BUNDLED {
+            let path = Path::new("songs").join(name);
+            if !path.exists() {
+                continue;
+            }
+            let charts = load_song(&SongSource::Sng(path)).expect("bundled song should parse");
+            for c in &charts {
+                assert!(!c.sections.is_empty(), "{name}: no sections");
+                for w in c.sections.windows(2) {
+                    assert!(w[0].start < w[1].start, "{name}: sections out of order");
+                    assert_eq!(w[0].end, w[1].start, "{name}: section spans don't chain");
+                }
+                let last = c.sections.last().unwrap();
+                assert!(last.end >= c.end - 1e-6, "{name}: last section stops short");
+                println!(
+                    "{name} [{}]: {} sections: {:?}",
+                    c.instrument.label(),
+                    c.sections.len(),
+                    c.sections.iter().map(|s| s.name.as_str()).collect::<Vec<_>>()
+                );
+            }
+        }
     }
 }
 

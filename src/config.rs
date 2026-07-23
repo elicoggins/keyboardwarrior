@@ -241,13 +241,21 @@ pub fn save_settings(s: &SettingsFile) {
 
 // -------------------------------------------------------------------- scores
 
-/// A song+difficulty personal best. `score` is the ranking metric; accuracy
-/// and combo ride along for display.
+/// A song+difficulty personal best. `accuracy` (the percentage) is the ranking
+/// metric, with `score` as the tiebreaker; combo rides along for display.
 #[derive(Serialize, Deserialize, Clone, Copy, Default)]
 pub struct BestScore {
     pub score: i64,
     pub accuracy: f64,
     pub max_combo: i64,
+}
+
+impl BestScore {
+    /// A run beats another when it lands a higher accuracy, or ties the
+    /// accuracy with a higher score.
+    fn beats(&self, other: &BestScore) -> bool {
+        (self.accuracy, self.score) > (other.accuracy, other.score)
+    }
 }
 
 /// What `Scores::record` found and did.
@@ -286,8 +294,9 @@ impl Scores {
         self.map.get(&score_key(title, artist, diff, mode)).copied()
     }
 
-    /// Record a finished run, replacing the stored best only when it scores
-    /// higher (or none existed). Persists on change.
+    /// Record a finished run, replacing the stored best only when it lands a
+    /// higher accuracy — or ties the accuracy with a higher score — than what's
+    /// on file (or none existed). Persists on change.
     pub fn record(
         &mut self,
         title: &str,
@@ -297,8 +306,9 @@ impl Scores {
         run: BestScore,
     ) -> Recorded {
         let key = score_key(title, artist, diff, mode);
-        let prev_best = self.map.get(&key).map(|b| b.score);
-        let improved = prev_best.is_none_or(|p| run.score > p);
+        let prev = self.map.get(&key).copied();
+        let prev_best = prev.map(|b| b.score);
+        let improved = prev.is_none_or(|p| run.beats(&p));
         if improved {
             self.map.insert(key, run);
             self.save();
@@ -345,12 +355,14 @@ mod tests {
         assert_eq!(v, vec![PathBuf::from("/a")]);
     }
 
-    /// A best is set silently on the first clear (no banner), only replaced by
-    /// a strictly higher score, and kept per song+artist+difficulty.
+    /// A best is set silently on the first clear (no banner), replaced only by
+    /// a higher accuracy — or a higher score at an equal accuracy — and kept
+    /// per song+artist+difficulty.
     #[test]
     fn scores_record_only_on_improvement() {
         // path: None keeps save() a no-op, so the test never touches disk.
         let mut s = Scores { map: HashMap::new(), path: None };
+        // Same accuracy throughout, so score is the deciding tiebreaker.
         let run = |score| BestScore { score, accuracy: 90.0, max_combo: 10 };
 
         // First clear: improved, but there's no prior score to have beaten.
@@ -358,15 +370,24 @@ mod tests {
         assert!(first.improved && first.prev_best.is_none());
         assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(1000));
 
-        // A worse (or equal) run doesn't move the record.
+        // At an equal accuracy, a worse (or equal) score doesn't move the record.
         assert!(!s.record("Song", "Artist", 3, "WORDS", run(800)).improved);
         assert!(!s.record("Song", "Artist", 3, "WORDS", run(1000)).improved);
         assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(1000));
 
-        // A better run improves and reports the score it beat.
+        // A better score at the same accuracy improves and reports the score it beat.
         let better = s.record("Song", "Artist", 3, "WORDS", run(1500));
         assert!(better.improved && better.prev_best == Some(1000));
         assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(1500));
+
+        // A higher accuracy wins even with a lower score...
+        let cleaner = BestScore { score: 900, accuracy: 99.0, max_combo: 10 };
+        assert!(s.record("Song", "Artist", 3, "WORDS", cleaner).improved);
+        assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.accuracy), Some(99.0));
+
+        // ...and a huge score at a lower accuracy can't unseat it.
+        assert!(!s.record("Song", "Artist", 3, "WORDS", run(9999)).improved);
+        assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(900));
 
         // Another difficulty of the same song keeps its own record.
         assert!(s.best("Song", "Artist", 2, "WORDS").is_none());
@@ -375,7 +396,7 @@ mod tests {
         assert!(s.best("Song", "Artist", 3, "DFJK").is_none());
         s.record("Song", "Artist", 3, "DFJK", run(50));
         assert_eq!(s.best("Song", "Artist", 3, "DFJK").map(|b| b.score), Some(50));
-        assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(1500));
+        assert_eq!(s.best("Song", "Artist", 3, "WORDS").map(|b| b.score), Some(900));
     }
 
     /// The whole point of this module: an extra folder full of .sng files is

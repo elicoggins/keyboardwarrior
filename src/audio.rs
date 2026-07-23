@@ -34,6 +34,11 @@ pub type Buf = Arc<Vec<[f32; 2]>>;
 /// pulses the sustain tail at the same rate, so width and pitch breathe as one.
 pub const WH_PUMP_HZ: f64 = 4.8;
 
+/// "No timeline running" sentinel for the shared start-frame atomic. The
+/// stored value is an i64 reinterpreted as u64 (practice mode can park the
+/// timeline's zero before device frame 0), so i64::MAX is the impossible one.
+const NO_TIMELINE: u64 = i64::MAX as u64;
+
 enum Cmd {
     /// Play a one-shot now.
     Play {
@@ -47,12 +52,18 @@ enum Cmd {
         time: f64,
     },
     /// Begin a timeline whose zero lands at global frame `start_frame`,
-    /// with optional music stems that start exactly there.
+    /// with optional music stems that start exactly there. `start_frame` is
+    /// signed: practice mode starts mid-song, putting the timeline's zero
+    /// before the device clock's — possibly before frame 0.
     StartTimeline {
-        start_frame: u64,
+        start_frame: i64,
+        rate: f64,        // song-seconds per real second (varispeed)
+        audible_src: f64, // stem sample index the music becomes audible at
         backing: Option<Buf>,
         lead: Option<Buf>,
     },
+    /// Change the playback rate in place; the position stays continuous.
+    SetRate(f64),
     /// Duck or restore the lead stem (smoothed in the callback).
     SetLeadGain(f32),
     /// Whammy bar position 0..1: 1 holds the lead bent-down and doubled
@@ -76,7 +87,14 @@ struct Voice {
 }
 
 struct Timeline {
-    start_frame: u64,
+    start_frame: i64,
+    // Playback rate: stem samples advanced per device frame. 1.0 plays the
+    // recording straight; practice mode's slow-motion/overclock resamples
+    // (varispeed — pitch shifts with speed, like a tape machine).
+    rate: f64,
+    // Stem sample index before which the music stays silent — practice mode's
+    // count-in plays over silence, then the song enters at the section start.
+    audible_src: f64,
     backing: Option<Buf>,
     lead: Option<Buf>,
     lead_gain: f32,
@@ -258,14 +276,14 @@ impl Mixer {
                 Cmd::PlayAt { buf, vol, time } => {
                     let start_frame = match &self.timeline {
                         Some(t) => {
-                            let f = t.start_frame as f64 + time * sample_rate;
+                            let f = t.start_frame as f64 + time * sample_rate / t.rate;
                             f.max(now as f64) as u64
                         }
                         None => now,
                     };
                     self.voices.push(Voice { buf, vol, pos: 0, start_frame, scheduled: true });
                 }
-                Cmd::StartTimeline { start_frame, backing, lead } => {
+                Cmd::StartTimeline { start_frame, rate, audible_src, backing, lead } => {
                     retire(&self.garbage, self.timeline.take());
                     // Unplayed one-shots from the old timeline die with it
                     self.voices.retain(|v| !v.scheduled || v.pos > 0);
@@ -273,6 +291,8 @@ impl Mixer {
                     self.sp_wet_target = 0.0;
                     self.timeline = Some(Timeline {
                         start_frame,
+                        rate,
+                        audible_src,
                         backing,
                         lead,
                         lead_gain: 1.0,
@@ -283,6 +303,17 @@ impl Mixer {
                         wh_lfo: 0.0,
                         paused: false,
                     });
+                }
+                Cmd::SetRate(r) => {
+                    // Re-anchor the origin so the position is continuous
+                    // across the change: (now - start) * rate is preserved.
+                    if let Some(t) = self.timeline.as_mut() {
+                        let now_i = now as i64;
+                        t.start_frame =
+                            now_i - (((now_i - t.start_frame) as f64) * t.rate / r).round() as i64;
+                        t.rate = r;
+                        self.timeline_start.store(t.start_frame as u64, Ordering::Relaxed);
+                    }
                 }
                 Cmd::SetLeadGain(g) => {
                     if let Some(t) = self.timeline.as_mut() {
@@ -339,8 +370,11 @@ impl Mixer {
             let mut fx_r = 0.0f32;
 
             if let Some(t) = self.timeline.as_mut() {
-                if !t.paused && gf >= t.start_frame {
-                    let idx = (gf - t.start_frame) as usize;
+                if !t.paused && (gf as i64) >= t.start_frame {
+                    // Stem read position: fractional at practice rates (the
+                    // stems are varispeed-resampled), exact integers at 1.0.
+                    let src = (gf as i64 - t.start_frame) as f64 * t.rate;
+                    let audible = src + 0.5 >= t.audible_src;
                     // Whammy: ease the bar, pump the LFO, and advance
                     // the grain phase by the momentary dive depth —
                     // the pitch wobbles down and back while held
@@ -356,6 +390,14 @@ impl Mixer {
                         // Each fresh press starts the pump from the top
                         t.wh_lfo = 0.0;
                     }
+                    let rate = t.rate;
+                    let read = move |buf: &Buf| {
+                        if rate == 1.0 {
+                            buf.get(src as usize).copied().unwrap_or([0.0; 2])
+                        } else {
+                            sample_at(buf, src)
+                        }
+                    };
                     if let Some(b) = &t.backing {
                         // Backing (vocals, drums, bass, …) always plays dry:
                         // the whammy is a lead-guitar effect and must never
@@ -363,21 +405,25 @@ impl Mixer {
                         // isolated lead) therefore gets the bar's on-screen bow
                         // but no audio bend, instead of the whole mix — vocals
                         // and all — being run through the pitch-down voice.
-                        let s = b.get(idx).copied().unwrap_or([0.0; 2]);
-                        l += s[0];
-                        r += s[1];
+                        if audible {
+                            let s = read(b);
+                            l += s[0];
+                            r += s[1];
+                        }
                     }
                     t.lead_gain += (t.lead_target - t.lead_gain) * gain_k;
                     if let Some(ld) = &t.lead {
-                        let s = if bend {
-                            whammy_mix(ld, idx, wh, t.wh_phase, wh_win)
-                        } else {
-                            ld.get(idx).copied().unwrap_or([0.0; 2])
-                        };
-                        l += s[0] * t.lead_gain;
-                        r += s[1] * t.lead_gain;
-                        fx_l = s[0] * t.lead_gain;
-                        fx_r = s[1] * t.lead_gain;
+                        if audible {
+                            let s = if bend {
+                                whammy_mix(ld, src, wh, t.wh_phase, wh_win)
+                            } else {
+                                read(ld)
+                            };
+                            l += s[0] * t.lead_gain;
+                            r += s[1] * t.lead_gain;
+                            fx_l = s[0] * t.lead_gain;
+                            fx_r = s[1] * t.lead_gain;
+                        }
                     }
                 }
             }
@@ -420,8 +466,8 @@ impl Mixer {
         // one-shot scheduled on it) holds still.
         if paused {
             if let Some(t) = self.timeline.as_mut() {
-                t.start_frame += nframes as u64;
-                self.timeline_start.store(t.start_frame, Ordering::Relaxed);
+                t.start_frame += nframes as i64;
+                self.timeline_start.store(t.start_frame as u64, Ordering::Relaxed);
             }
             for v in self.voices.iter_mut() {
                 if v.scheduled && v.pos == 0 {
@@ -441,7 +487,11 @@ pub struct AudioEngine {
     tx: Sender<Cmd>,
     // Shared with the callback: while paused the callback slides this forward
     // in lockstep with the device clock so the position holds still.
+    // Holds an i64 as u64 bits (see NO_TIMELINE).
     timeline_start: Arc<AtomicU64>,
+    // Playback rate as f64 bits — the engine-side copy timeline_pos reads;
+    // the mixer keeps its own on the Timeline.
+    rate: AtomicU64,
     // Master volume 0..1 as f32 bits, applied to the whole mix in the
     // callback (smoothed there, so steps never zipper)
     master: Arc<AtomicU32>,
@@ -465,7 +515,7 @@ impl AudioEngine {
         let channels = config.channels() as usize;
 
         let frames = Arc::new(AtomicU64::new(0));
-        let timeline_start = Arc::new(AtomicU64::new(u64::MAX));
+        let timeline_start = Arc::new(AtomicU64::new(NO_TIMELINE));
         let master = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let (tx, rx) = channel::<Cmd>();
         let (garbage_tx, garbage_rx) = channel::<Buf>();
@@ -500,6 +550,7 @@ impl AudioEngine {
             frames,
             tx,
             timeline_start,
+            rate: AtomicU64::new(1.0f64.to_bits()),
             master,
             epoch: Instant::now(),
             smooth: Mutex::new(ClockSmooth { offset: 0.0, init: false }),
@@ -515,7 +566,7 @@ impl AudioEngine {
     pub fn new() -> AudioEngine {
         let sample_rate = unsafe { web::kw_audio_start() };
         let frames = Arc::new(AtomicU64::new(0));
-        let timeline_start = Arc::new(AtomicU64::new(u64::MAX));
+        let timeline_start = Arc::new(AtomicU64::new(NO_TIMELINE));
         let master = Arc::new(AtomicU32::new(1.0f32.to_bits()));
         let (tx, rx) = channel::<Cmd>();
         let (garbage_tx, garbage_rx) = channel::<Buf>();
@@ -533,6 +584,7 @@ impl AudioEngine {
             frames,
             tx,
             timeline_start,
+            rate: AtomicU64::new(1.0f64.to_bits()),
             master,
             epoch: macroquad::miniquad::date::now(),
             smooth: Mutex::new(ClockSmooth { offset: 0.0, init: false }),
@@ -566,17 +618,55 @@ impl AudioEngine {
     /// Start a new timeline. Its zero lands `lead_in` seconds from now, and
     /// the stems (if any) begin at exactly that frame.
     pub fn start_timeline(&self, lead_in: f64, backing: Option<Buf>, lead: Option<Buf>) {
+        self.start_timeline_at(lead_in, 0.0, 1.0, 0.0, backing, lead);
+    }
+
+    /// Start a timeline mid-song: its *position* reads `pos` song-seconds
+    /// `lead_in` real seconds from now, advancing at `rate` song-seconds per
+    /// real second (stems are varispeed-resampled), and the stems stay
+    /// silent before `audible_from` song seconds — so a practice count-in
+    /// ticks over silence and the music enters exactly at the section start.
+    pub fn start_timeline_at(
+        &self,
+        lead_in: f64,
+        pos: f64,
+        rate: f64,
+        audible_from: f64,
+        backing: Option<Buf>,
+        lead: Option<Buf>,
+    ) {
         let now = self.frames.load(Ordering::Relaxed);
-        // Small safety pad so the start frame is still in the future when the
-        // callback processes the command.
-        let start_frame = now + ((lead_in.max(0.05)) * self.sample_rate as f64) as u64;
-        self.timeline_start.store(start_frame, Ordering::Relaxed);
+        let sr = self.sample_rate as f64;
+        // Small safety pad so the position reaches `pos` while the command is
+        // still guaranteed to have been processed by the callback.
+        let start_frame =
+            now as i64 + ((lead_in.max(0.05)) * sr) as i64 - (pos * sr / rate).round() as i64;
+        self.timeline_start.store(start_frame as u64, Ordering::Relaxed);
+        self.rate.store(rate.to_bits(), Ordering::Relaxed);
         self.smooth.lock().unwrap().init = false;
-        let _ = self.tx.send(Cmd::StartTimeline { start_frame, backing, lead });
+        let _ = self.tx.send(Cmd::StartTimeline {
+            start_frame,
+            rate,
+            audible_src: audible_from * sr,
+            backing,
+            lead,
+        });
+    }
+
+    /// Playback rate (1.0 = recorded speed) — practice mode's slow-motion
+    /// and overclock. Song time keeps flowing continuously across a change.
+    pub fn rate(&self) -> f64 {
+        f64::from_bits(self.rate.load(Ordering::Relaxed))
+    }
+
+    pub fn set_rate(&self, rate: f64) {
+        self.rate.store(rate.to_bits(), Ordering::Relaxed);
+        self.smooth.lock().unwrap().init = false;
+        let _ = self.tx.send(Cmd::SetRate(rate));
     }
 
     pub fn stop_timeline(&self) {
-        self.timeline_start.store(u64::MAX, Ordering::Relaxed);
+        self.timeline_start.store(NO_TIMELINE, Ordering::Relaxed);
         let _ = self.tx.send(Cmd::StopTimeline);
     }
 
@@ -628,21 +718,24 @@ impl AudioEngine {
     /// provides truth, and the low-passed offset between them removes drift.
     pub fn timeline_pos(&self) -> f64 {
         let start = self.timeline_start.load(Ordering::Relaxed);
-        if start == u64::MAX {
+        if start == NO_TIMELINE {
             return f64::NEG_INFINITY;
         }
+        let rate = self.rate();
         let frames = self.frames.load(Ordering::Relaxed);
-        let raw = (frames as f64 - start as f64) / self.sample_rate as f64;
+        // Position advances `rate` song-seconds per real second, so the wall
+        // clock is scaled to match before the offset between them is smoothed.
+        let raw = (frames as f64 - (start as i64) as f64) / self.sample_rate as f64 * rate;
         let wall = self.wall_elapsed();
         let mut s = self.smooth.lock().unwrap();
-        let target = raw - wall;
+        let target = raw - wall * rate;
         if !s.init || (target - s.offset).abs() > 0.06 {
             s.offset = target;
             s.init = true;
         } else {
             s.offset += (target - s.offset) * 0.05;
         }
-        wall + s.offset
+        wall * rate + s.offset
     }
 }
 
@@ -734,13 +827,14 @@ mod web {
 /// voice. The voice is two taps on a delay that drifts backward (a constant
 /// pitch-down), each wrapping where its triangle weight is zero, so grains
 /// never click. Weights sum past 1 on purpose — the held note gets fatter.
-fn whammy_mix(buf: &[[f32; 2]], idx: usize, wh: f32, phase: f64, win: f32) -> [f32; 2] {
-    let dry = buf.get(idx).copied().unwrap_or([0.0; 2]);
+/// `pos` is a fractional stem sample index (practice-rate playback resamples).
+fn whammy_mix(buf: &[[f32; 2]], pos: f64, wh: f32, phase: f64, win: f32) -> [f32; 2] {
+    let dry = sample_at(buf, pos);
     let mut s = [dry[0] * (1.0 - 0.25 * wh), dry[1] * (1.0 - 0.25 * wh)];
     for off in [0.0, 0.5] {
         let q = ((phase + off) % 1.0) as f32;
         let w = (1.0 - (2.0 * q - 1.0).abs()) * 0.85 * wh;
-        let tap = sample_at(buf, idx as f64 - (q * win) as f64);
+        let tap = sample_at(buf, pos - (q * win) as f64);
         s[0] += tap[0] * w;
         s[1] += tap[1] * w;
     }

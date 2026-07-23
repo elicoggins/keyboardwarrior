@@ -19,6 +19,7 @@ mod controls;
 mod decode;
 mod gfx;
 mod play;
+mod practice;
 mod settings;
 mod sng;
 mod theme;
@@ -30,13 +31,17 @@ use audio::{make_sounds, AudioEngine, Buf};
 use chart::{Instrument, SongChart, SongSource, DIFF_NAMES};
 use controls::{draw_inline_cap, draw_rule, draw_strip, Cap, Item, Style};
 use gfx::{draw_centered, draw_frame_graph, dtext, msize, prewarm_glyphs, ui, FRAME_LOG_LEN};
-use play::{is_typeable, lane_of, Judgement, Play, Results, SongRef};
+use play::{
+    is_typeable, lane_of, Judgement, Play, Results, SongRef, PRACTICE_RATE_MAX, PRACTICE_RATE_MIN,
+    PRACTICE_RATE_STEP,
+};
+use practice::{PickAction, SectionPicker};
 use settings::{
     calib_offset, cycle, settings_lines, settings_rows, SettingLine, SettingRow, CALIB_MS,
     CALIB_PERIOD, SPEEDS, SPEED_IDX,
 };
 use theme::{th, wa, THEMES, THEME_IDX};
-use words::{TEXT_MODES, TEXT_MODE_IDX};
+use words::{text_mode, TextMode, TEXT_MODES, TEXT_MODE_IDX};
 
 /// Side margin every footer strip and rule is inset by, so nothing on a
 /// screen's bottom edge ever runs into the window frame.
@@ -122,6 +127,16 @@ enum Scene {
         song: usize,
         diff: usize,
         title: String,
+        // Practice: the inclusive section range the run will loop.
+        practice: Option<(usize, usize)>,
+    },
+    // Practice mode's pre-song popup (SHIFT+ENTER on the menu): pick the
+    // section — or run of sections — to loop before the song loads.
+    PracticePick {
+        picker: SectionPicker,
+        song: usize,
+        diff: usize,
+        instrument: Instrument,
     },
     Playing(Box<Play>),
     Results(Results),
@@ -178,6 +193,21 @@ fn step_selection(
 /// score is shown — instead of snapping back to the easiest.
 fn diff_pos(songs: &[chart::SongEntry], song: usize, diff: usize) -> usize {
     songs.get(song).and_then(|s| s.available.iter().position(|&d| d == diff)).unwrap_or(0)
+}
+
+/// Nudge the practice playback rate one 5% notch (Clone Hero's 25%–200%),
+/// live in the engine and remembered on the run. False at either end stop.
+fn adjust_practice_rate(play: &mut Play, engine: &AudioEngine, dir: f64) -> bool {
+    let Some(pr) = play.practice.as_mut() else { return false };
+    let stepped =
+        ((pr.rate + PRACTICE_RATE_STEP * dir) / PRACTICE_RATE_STEP).round() * PRACTICE_RATE_STEP;
+    let r = stepped.clamp(PRACTICE_RATE_MIN, PRACTICE_RATE_MAX);
+    if (r - pr.rate).abs() < 1e-9 {
+        return false;
+    }
+    pr.rate = r;
+    engine.set_rate(r);
+    true
 }
 
 /// Whether keystrokes edit the query or navigate the results list.
@@ -528,6 +558,11 @@ async fn main() {
     // again on the same row removes it. Any navigation disarms.
     #[cfg(not(target_arch = "wasm32"))]
     let mut pending_delete: Option<usize> = None;
+    // SHIFT+ENTER opened the guitar/bass chooser, so the eventual launch is a
+    // practice run even if the confirming ENTER arrives without SHIFT.
+    let mut practice_arm = false;
+    // The pause menu's section picker, open over a paused practice run.
+    let mut pause_pick: Option<SectionPicker> = None;
     let mut scene = Scene::Menu { sel: 0, diff_sel: 0, scroll: 0.0, pick: None };
 
     // Debug hook: KW_AUTOSTART=<song>:<diff> jumps straight into a song
@@ -539,7 +574,13 @@ async fn main() {
             let instrument =
                 songs[s].charts.first().map(|c| c.instrument).unwrap_or(Instrument::Guitar);
             let rx = spawn_loader(songs[s].source.clone(), instrument, engine.sample_rate, None);
-            scene = Scene::Loading { rx, song: s, diff: d, title: songs[s].title.clone() };
+            scene = Scene::Loading {
+                rx,
+                song: s,
+                diff: d,
+                title: songs[s].title.clone(),
+                practice: None,
+            };
         }
     }
 
@@ -628,6 +669,7 @@ async fn main() {
                 } else if is_key_pressed(KeyCode::Escape) && pick.is_some() {
                     // Back out of the guitar/bass chooser to difficulty selection.
                     *pick = None;
+                    practice_arm = false;
                     engine.play(&sounds.hat, 0.4);
                 } else if is_key_pressed(KeyCode::Semicolon) {
                     menu_search = Some(String::new());
@@ -657,6 +699,7 @@ async fn main() {
                     *sel = view.iter().copied().find(|&i| !songs[i].locked).unwrap_or(view[0]);
                     *diff_sel = 0;
                     *pick = None;
+                    practice_arm = false;
                 }
 
                 // Difficulty options for the selected song. A broken song has
@@ -673,6 +716,7 @@ async fn main() {
                         // Moving to another song leaves the chooser behind — the
                         // pick isn't kept for when you come back.
                         *pick = None;
+                        practice_arm = false;
                         engine.play(&sounds.hat, 0.4);
                     }
                 }
@@ -848,6 +892,9 @@ async fn main() {
                     engine.play(&sounds.miss, 0.3);
                     toast = Some(Toast::new("this song failed to load - it can't be played"));
                 } else if is_key_pressed(KeyCode::Enter) {
+                    // SHIFT+ENTER is Clone Hero's practice entrance: instead of
+                    // launching, open the section popup for the chosen chart.
+                    let shift = is_key_down(KeyCode::LeftShift) || is_key_down(KeyCode::RightShift);
                     let (row, d) = (*sel, diff_opts[*diff_sel].0);
                     // Already choosing an instrument: launch it. Otherwise, if
                     // this difficulty charts two comparable instruments, open the
@@ -860,6 +907,7 @@ async fn main() {
                         let options = chart::charts_for_diff(&songs[row].charts, d);
                         if options.len() > 1 {
                             *pick = Some((options, 0));
+                            practice_arm = shift;
                             engine.play(&sounds.hat, 0.4);
                             None
                         } else {
@@ -869,6 +917,18 @@ async fn main() {
                     if let Some(instrument) = instrument {
                         engine.play(&sounds.kick, 0.5);
                         toast = None;
+                        let wants_practice = shift || practice_arm;
+                        practice_arm = false;
+                        if wants_practice && !songs[row].sections.is_empty() {
+                            scene = Scene::PracticePick {
+                                picker: SectionPicker::new(songs[row].sections.clone(), 0),
+                                song: row,
+                                diff: d,
+                                instrument,
+                            };
+                            next_frame().await;
+                            continue;
+                        }
                         let rx = spawn_loader(
                             songs[row].source.clone(),
                             instrument,
@@ -880,6 +940,7 @@ async fn main() {
                             song: row,
                             diff: d,
                             title: songs[row].title.clone(),
+                            practice: None,
                         };
                         next_frame().await;
                         continue;
@@ -1216,6 +1277,7 @@ async fn main() {
                 // list need no teaching.
                 let play = [
                     Item::act(Cap::Txt("ENTER"), "play"),
+                    Item::act(Cap::Pair("SHIFT", "ENTER"), "practice"),
                     Item::act(Cap::Txt(";"), "search"),
                     Item::act(Cap::Txt("S"), "settings"),
                 ];
@@ -1234,6 +1296,58 @@ async fn main() {
                 draw_strip(&[&play, &library], hint_cy, avail, hint_s);
                 #[cfg(target_arch = "wasm32")]
                 draw_strip(&[&play], hint_cy, avail, hint_s);
+            }
+
+            Scene::PracticePick { picker, song, diff, instrument } => {
+                let nav = nav_repeat.poll(&[KeyCode::Up, KeyCode::Down], get_frame_time());
+                if nav.is_some() {
+                    engine.play(&sounds.hat, 0.4);
+                }
+                let enter = is_key_pressed(KeyCode::Enter);
+                let escape = is_key_pressed(KeyCode::Escape);
+                match picker.update(nav, enter, escape) {
+                    PickAction::Confirm(lo, hi) => {
+                        engine.play(&sounds.kick, 0.5);
+                        toast = None;
+                        let (song, diff) = (*song, *diff);
+                        let rx = spawn_loader(
+                            songs[song].source.clone(),
+                            *instrument,
+                            engine.sample_rate,
+                            stem_cache.clone(),
+                        );
+                        scene = Scene::Loading {
+                            rx,
+                            song,
+                            diff,
+                            title: songs[song].title.clone(),
+                            practice: Some((lo, hi)),
+                        };
+                        next_frame().await;
+                        continue;
+                    }
+                    PickAction::Anchored => engine.play(&sounds.kick, 0.4),
+                    PickAction::Cancel => {
+                        engine.play(&sounds.hat, 0.4);
+                        let sel = *song;
+                        let diff_sel = diff_pos(&songs, sel, *diff);
+                        scene = Scene::Menu { sel, diff_sel, scroll: sel as f32, pick: None };
+                        next_frame().await;
+                        continue;
+                    }
+                    PickAction::None => {}
+                }
+
+                clear_background(th().bg);
+                let k = ui();
+                draw_centered("PRACTICE MODE", 90.0 * k, 44.0 * k, wa(th().accent, 0.95));
+                draw_centered(
+                    &format!("{}  ·  {}", songs[*song].title, DIFF_NAMES[*diff]),
+                    128.0 * k,
+                    20.0 * k,
+                    Color::new(1.0, 1.0, 1.0, 0.55),
+                );
+                picker.draw();
             }
 
             Scene::Settings { sel, menu_sel } => {
@@ -1445,6 +1559,48 @@ async fn main() {
             }
 
             Scene::Playing(play) => {
+                // The pause menu's section picker owns every key while open —
+                // its ESC steps back into the pause card, never unpauses.
+                if let Some(picker) = pause_pick.as_mut() {
+                    let nav = nav_repeat.poll(&[KeyCode::Up, KeyCode::Down], get_frame_time());
+                    if nav.is_some() {
+                        engine.play(&sounds.hat, 0.4);
+                    }
+                    let enter = is_key_pressed(KeyCode::Enter);
+                    let escape = is_key_pressed(KeyCode::Escape);
+                    match picker.update(nav, enter, escape) {
+                        PickAction::Confirm(lo, hi) => {
+                            // Re-deal the run over the new span (same chart and
+                            // stems, same speed) and drop straight into its
+                            // count-in.
+                            engine.play(&sounds.kick, 0.5);
+                            pause_pick = None;
+                            engine.set_paused(false);
+                            let fresh = play.with_range((lo, hi), &engine, &sounds);
+                            **play = fresh;
+                        }
+                        PickAction::Anchored => engine.play(&sounds.kick, 0.4),
+                        PickAction::Cancel => {
+                            engine.play(&sounds.hat, 0.4);
+                            pause_pick = None;
+                        }
+                        PickAction::None => {}
+                    }
+                    while get_char_pressed().is_some() {}
+                    play.draw(play.pause_now);
+                    if let Some(p) = pause_pick.as_mut() {
+                        draw_rectangle(
+                            0.0,
+                            0.0,
+                            screen_width(),
+                            screen_height(),
+                            Color::new(0.0, 0.0, 0.0, 0.55),
+                        );
+                        p.draw();
+                    }
+                    next_frame().await;
+                    continue;
+                }
                 if is_key_pressed(KeyCode::Escape) {
                     play.paused = !play.paused;
                     if play.paused {
@@ -1466,10 +1622,42 @@ async fn main() {
                         next_frame().await;
                         continue;
                     }
-                    // Restart: reload the same song+difficulty from the top. The
-                    // stem cache holds this song's decoded audio, so the reload
-                    // is instant — same path as the results screen's replay.
-                    if is_key_pressed(KeyCode::R) {
+                    if play.practice.is_some() {
+                        // Practice pause: R rewinds the span in place (no
+                        // reload), S re-picks the sections, arrows change speed.
+                        if is_key_pressed(KeyCode::R) {
+                            engine.play(&sounds.kick, 0.5);
+                            play.restart_loop(&engine, &sounds);
+                            play.paused = false;
+                            while get_char_pressed().is_some() {}
+                            next_frame().await;
+                            continue;
+                        }
+                        if is_key_pressed(KeyCode::S) {
+                            engine.play(&sounds.hat, 0.4);
+                            let pr = play.practice.as_ref().unwrap();
+                            pause_pick = Some(SectionPicker::new(pr.sections.clone(), pr.range.0));
+                        }
+                        // W flips whether each pass re-deals fresh words —
+                        // meaningless in WORDS (FIXED), which never reshuffles.
+                        if is_key_pressed(KeyCode::W) && text_mode() != TextMode::WordsFixed {
+                            let pr = play.practice.as_mut().unwrap();
+                            pr.reseed = !pr.reseed;
+                            engine.play(&sounds.kick, 0.4);
+                        }
+                        let nav =
+                            nav_repeat.poll(&[KeyCode::Left, KeyCode::Right], get_frame_time());
+                        if let Some(key) = nav {
+                            let dir = if key == KeyCode::Right { 1.0 } else { -1.0 };
+                            if adjust_practice_rate(play, &engine, dir) {
+                                engine.play(&sounds.hat, 0.4);
+                            }
+                        }
+                    } else if is_key_pressed(KeyCode::R) {
+                        // Restart: reload the same song+difficulty from the top.
+                        // The stem cache holds this song's decoded audio, so the
+                        // reload is instant — same path as the results screen's
+                        // replay.
                         engine.set_paused(false);
                         engine.stop_timeline();
                         engine.play(&sounds.kick, 0.5);
@@ -1480,7 +1668,13 @@ async fn main() {
                             engine.sample_rate,
                             stem_cache.clone(),
                         );
-                        scene = Scene::Loading { rx, song, diff, title: songs[song].title.clone() };
+                        scene = Scene::Loading {
+                            rx,
+                            song,
+                            diff,
+                            title: songs[song].title.clone(),
+                            practice: None,
+                        };
                         next_frame().await;
                         continue;
                     }
@@ -1502,18 +1696,62 @@ async fn main() {
                         Color::new(1.0, 1.0, 1.0, 0.95),
                     );
                     let s = Style::hint(k);
-                    draw_strip(
-                        &[&[
+                    if let Some(pr) = &play.practice {
+                        draw_centered(
+                            "PRACTICE MODE",
+                            screen_height() * 0.42 - 60.0 * k,
+                            22.0 * k,
+                            wa(th().accent, 0.85),
+                        );
+                        let actions = [
                             Item::act(Cap::Txt("ESC"), "resume"),
-                            Item::act(Cap::Txt("R"), "restart"),
+                            Item::act(Cap::Txt("R"), "restart section"),
+                            Item::act(Cap::Txt("S"), "change sections"),
                             Item::act(Cap::Txt("Q"), "quit to menu"),
-                        ]],
-                        screen_height() * 0.42 + 40.0 * k,
-                        screen_width() - FOOTER_INSET * 2.0 * k,
-                        s,
-                    );
+                        ];
+                        let mut tuning = vec![Item::stat(
+                            Cap::Pair("<", ">"),
+                            "SPEED",
+                            format!("{:.0}%", pr.rate * 100.0),
+                        )];
+                        if text_mode() != TextMode::WordsFixed {
+                            tuning.push(Item::stat(
+                                Cap::Txt("W"),
+                                "RESEED",
+                                if pr.reseed { "ON" } else { "OFF" },
+                            ));
+                        }
+                        draw_strip(
+                            &[&actions, &tuning],
+                            screen_height() * 0.42 + 40.0 * k,
+                            screen_width() - FOOTER_INSET * 2.0 * k,
+                            s,
+                        );
+                    } else {
+                        draw_strip(
+                            &[&[
+                                Item::act(Cap::Txt("ESC"), "resume"),
+                                Item::act(Cap::Txt("R"), "restart"),
+                                Item::act(Cap::Txt("Q"), "quit to menu"),
+                            ]],
+                            screen_height() * 0.42 + 40.0 * k,
+                            screen_width() - FOOTER_INSET * 2.0 * k,
+                            s,
+                        );
+                    }
                     next_frame().await;
                     continue;
+                }
+                // Practice: LEFT/RIGHT retune the speed live, mid-play —
+                // slow-motion drilling or overclocking, Clone Hero style.
+                if play.practice.is_some() {
+                    let nav = nav_repeat.poll(&[KeyCode::Left, KeyCode::Right], get_frame_time());
+                    if let Some(key) = nav {
+                        let dir = if key == KeyCode::Right { 1.0 } else { -1.0 };
+                        if adjust_practice_rate(play, &engine, dir) {
+                            engine.play(&sounds.hat, 0.4);
+                        }
+                    }
                 }
                 // The audio hardware's frame counter is the game clock; the
                 // judged clock additionally carries the calibration offset.
@@ -1590,7 +1828,13 @@ async fn main() {
                         engine.sample_rate,
                         stem_cache.clone(),
                     );
-                    scene = Scene::Loading { rx, song, diff, title: songs[song].title.clone() };
+                    scene = Scene::Loading {
+                        rx,
+                        song,
+                        diff,
+                        title: songs[song].title.clone(),
+                        practice: None,
+                    };
                     next_frame().await;
                     continue;
                 }
@@ -1613,12 +1857,16 @@ async fn main() {
                     24.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.7),
                 );
-                // Personal-best banner: only when this run beat a prior score.
+                // Personal-best banner: only when this run beat a prior best.
+                // Bests rank by accuracy, so a new best can carry a lower score
+                // — only surface the "+delta" when the score actually climbed.
                 if r.new_best {
                     let pulse = ((get_time() * 3.0).sin() * 0.5 + 0.5) as f32;
                     let msg = match r.prev_best {
-                        Some(prev) => format!("NEW PERSONAL BEST!   +{}", r.score - prev),
-                        None => "NEW PERSONAL BEST!".to_string(),
+                        Some(prev) if r.score > prev => {
+                            format!("NEW PERSONAL BEST!   +{}", r.score - prev)
+                        }
+                        _ => "NEW PERSONAL BEST!".to_string(),
                     };
                     draw_centered(&msg, 424.0 * k, 22.0 * k, wa(th().accent, 0.6 + 0.4 * pulse));
                 }
@@ -1648,10 +1896,10 @@ async fn main() {
                 );
             }
 
-            Scene::Loading { rx, song, diff, title } => {
+            Scene::Loading { rx, song, diff, title, practice } => {
                 match rx.try_recv() {
                     Ok(LoadMsg::Done(loaded)) => {
-                        let (song, diff) = (*song, *diff);
+                        let (song, diff, practice) = (*song, *diff, *practice);
                         let LoadedSong { chart, backing, lead } = *loaded;
                         stem_cache = Some((
                             songs[song].source.clone(),
@@ -1667,8 +1915,9 @@ async fn main() {
                                 d = best;
                             }
                         }
-                        let play =
-                            Play::new_chart(song, d, &chart, &engine, &sounds, backing, lead);
+                        let play = Play::new_chart(
+                            song, d, &chart, &engine, &sounds, backing, lead, practice, 1.0,
+                        );
                         toast = None;
                         scene = Scene::Playing(Box::new(play));
                     }

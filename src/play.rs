@@ -4,8 +4,8 @@
 use macroquad::prelude::*;
 
 use crate::audio::{self, AudioEngine, Buf, Sounds};
-use crate::chart::{Instrument, SongChart, DIFF_NAMES};
-use crate::gfx::{draw_fit, dtext, msize, ui};
+use crate::chart::{Instrument, Section, SongChart, DIFF_NAMES};
+use crate::gfx::{draw_centered, draw_fit, dtext, msize, ui};
 use crate::settings::{approach, sp_fx};
 use crate::theme::{mix, th, wa};
 use crate::words::{chart_seed, generate_text, text_mode, TextMode};
@@ -187,6 +187,25 @@ struct SpPhrase {
     broken: bool,
 }
 
+/// Practice-speed bounds and step, Clone Hero's: 25%–200% in 5% notches.
+pub const PRACTICE_RATE_MIN: f64 = 0.25;
+pub const PRACTICE_RATE_MAX: f64 = 2.0;
+pub const PRACTICE_RATE_STEP: f64 = 0.05;
+
+/// Everything a practice run carries beyond a normal one: which sections are
+/// being looped, at what speed, and how many passes have been made. A run
+/// with this set never finishes — it loops the span until the player quits.
+pub struct PracticeState {
+    pub sections: Vec<Section>, // the whole song's sections, for re-picking
+    pub range: (usize, usize),  // inclusive indices of the practiced span
+    pub span: (f64, f64),       // the span in song seconds
+    pub rate: f64,              // playback rate, PRACTICE_RATE_MIN..=MAX
+    pub loops: u32,             // completed passes over the span
+    // Whether each pass deals fresh words onto the gems (W on the pause
+    // menu). Defaults on; inert in WORDS (FIXED), which never reshuffles.
+    pub reseed: bool,
+}
+
 pub struct Play {
     pub song_ref: SongRef,
     pub title: String,
@@ -231,6 +250,13 @@ pub struct Play {
     beat_flash: f32,
     first_note_time: f64,
     end_time: f64,
+    // Practice mode, when this run is one. The chart and decoded stems ride
+    // along (Arc clones — no re-decode) so a loop can rewind the timeline and
+    // the pause menu can re-deal the run over a different section range.
+    pub practice: Option<PracticeState>,
+    chart: SongChart,
+    backing: Buf,
+    lead: Option<Buf>,
 }
 
 /// Gem radius as a fraction of the distance a note travels down the highway.
@@ -397,6 +423,10 @@ impl Play {
     /// Build a run from a Clone Hero chart: the charter's note timing becomes
     /// gems, grouped into phrases that carry real words. The stems are handed
     /// to the engine, which starts them at an exact frame after the count-in.
+    ///
+    /// `practice` selects an inclusive section range to loop instead of
+    /// playing the song through, at `rate` speed (only read when practicing).
+    #[allow(clippy::too_many_arguments)]
     pub fn new_chart(
         song_idx: usize,
         diff: usize,
@@ -405,7 +435,131 @@ impl Play {
         snd: &Sounds,
         backing: Buf,
         lead: Option<Buf>,
+        practice: Option<(usize, usize)>,
+        rate: f64,
     ) -> Self {
+        // Practice: clamp the range and resolve the time span it loops. The
+        // filter's top end is open past the last section so the closing note
+        // of the song (which sits exactly at chart.end) is never dropped;
+        // everywhere else a note on a boundary belongs to the next section.
+        let prac = practice.filter(|_| !chart.sections.is_empty()).map(|(lo, hi)| {
+            let lo = lo.min(chart.sections.len() - 1);
+            let hi = hi.clamp(lo, chart.sections.len() - 1);
+            let start = chart.sections[lo].start;
+            let last = hi + 1 == chart.sections.len();
+            let span_end = if last { chart.end.max(start) } else { chart.sections[hi].end };
+            let filter_end = if last { f64::INFINITY } else { span_end };
+            ((lo, hi), start, span_end, filter_end)
+        });
+        let (mut notes, words) = Self::deal_notes(chart, diff, prac.map(|(_, s, _, fe)| (s, fe)));
+
+        // Star power: tag notes inside each SP span and record phrase sizes
+        let mut sp_phrases = Vec::new();
+        for &(s, e) in &chart.sp[diff] {
+            let members: Vec<usize> = notes
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.time >= s - 1e-6 && n.time < e)
+                .map(|(i, _)| i)
+                .collect();
+            if members.len() >= 2 {
+                let id = sp_phrases.len() as u16;
+                for &i in &members {
+                    notes[i].sp_phrase = Some(id);
+                }
+                sp_phrases.push(SpPhrase { len: members.len(), hits: 0, broken: false });
+            }
+        }
+
+        let first = notes.first().map_or(prac.map_or(0.0, |(_, s, _, _)| s), |n| n.time);
+        // Beat interval measured AT the first note — charts can change tempo
+        // (or open with a placeholder bar) before the notes start, so
+        // beats[1]-beats[0] can count at the wrong speed
+        let spb = beat_interval_at(&chart.beats, first);
+        let end_time = match prac {
+            Some((_, _, span_end, _)) => span_end,
+            None => chart.end + 3.0,
+        };
+        if prac.is_none() {
+            // The stems begin at exactly timeline zero. Count-in: four hi-hat
+            // ticks on the real beat grid walking into the FIRST NOTE — matching
+            // the on-screen countdown. (Counting into timeline zero is useless:
+            // charts pad seconds of empty bars before the notes.) The grid
+            // extends backward, and the lead-in stretches, when a chart opens
+            // immediately.
+            let bi = chart.beats.partition_point(|&b| b < first - 1e-6);
+            let ticks: Vec<f64> = (1..=4usize)
+                .map(|k| bi.checked_sub(k).map_or(first - k as f64 * spb, |j| chart.beats[j]))
+                .collect();
+            // ...but only when the recording is quiet under them. Plenty of rips
+            // open with their own stick count or a musical intro; a synthesized
+            // click on top plays flams against the one or fights the other, so
+            // there the recording itself is the count. "Most quiet", not "all":
+            // the last tick often brushes the swell of the music coming in.
+            let quiet_at = |t: f64| {
+                let mut r = rms_around(&backing, engine.sample_rate, t);
+                if let Some(l) = &lead {
+                    r += rms_around(l, engine.sample_rate, t);
+                }
+                r < 0.05
+            };
+            let count_in = ticks.iter().filter(|&&t| quiet_at(t)).count() >= 3;
+            let earliest = ticks.last().copied().unwrap_or(0.0);
+            let lead_in = if count_in { (0.4 - earliest).max(3.0) } else { 3.0 };
+            engine.start_timeline(lead_in, Some(backing.clone()), lead.clone());
+            if count_in {
+                for &t in &ticks {
+                    engine.play_at(&snd.hat, 0.8, t);
+                }
+            }
+        }
+        let practice = prac.map(|((lo, hi), start, span_end, _)| PracticeState {
+            sections: chart.sections.clone(),
+            range: (lo, hi),
+            span: (start, span_end),
+            rate: rate.clamp(PRACTICE_RATE_MIN, PRACTICE_RATE_MAX),
+            loops: 0,
+            reseed: true,
+        });
+        let mut play = Self::from_parts(
+            SongRef { song: song_idx, diff, instrument: chart.instrument },
+            chart.title.clone(),
+            DIFF_NAMES[diff].to_string(),
+            notes,
+            words,
+            chart.beats.clone(),
+            sp_phrases,
+            spb,
+            first,
+            end_time,
+            chart.clone(),
+            backing,
+            lead,
+            practice,
+        );
+        // A practice run seeks the timeline into the span instead of starting
+        // the song from the top; its count-in always ticks (mid-song there's
+        // no quiet to detect) and the stems enter at the section boundary.
+        if play.practice.is_some() {
+            play.start_practice_timeline(engine, snd);
+        }
+        play
+    }
+
+    /// Deal a difficulty's charted timing out as word-carrying gems,
+    /// optionally sliced to a practice span (half-open in time).
+    ///
+    /// The WHOLE song is always grouped and worded first, and only then is
+    /// the span cut out — so a practiced section carries exactly the words,
+    /// word boundaries, and (in WORDS (FIXED)) the very letters it would in
+    /// a full run; drilling transfers one-to-one. A word straddling a span
+    /// edge keeps only its in-span letters, so the on-screen queue always
+    /// matches the gems.
+    fn deal_notes(
+        chart: &SongChart,
+        diff: usize,
+        span: Option<(f64, f64)>,
+    ) -> (Vec<Note>, Vec<String>) {
         let times: Vec<(f64, f64)> = chart.diffs[diff].iter().map(|n| (n.time, n.len)).collect();
 
         // Group notes into runs at musical rests, then deal each run out as
@@ -465,75 +619,150 @@ impl Play {
         if text_mode() == TextMode::WordsFixed {
             macroquad::rand::srand(macroquad::miniquad::date::now() as u64);
         }
-        let mut notes = assign_letters(&words, &flat_times);
+        let notes = assign_letters(&words, &flat_times);
 
-        // Star power: tag notes inside each SP span and record phrase sizes
-        let mut sp_phrases = Vec::new();
-        for &(s, e) in &chart.sp[diff] {
-            let members: Vec<usize> = notes
-                .iter()
-                .enumerate()
-                .filter(|(_, n)| n.time >= s - 1e-6 && n.time < e)
-                .map(|(i, _)| i)
-                .collect();
-            if members.len() >= 2 {
-                let id = sp_phrases.len() as u16;
-                for &i in &members {
-                    notes[i].sp_phrase = Some(id);
-                }
-                sp_phrases.push(SpPhrase { len: members.len(), hits: 0, broken: false });
+        // Practice: keep only the span's notes and rebuild the word list
+        // from what survived, remapping each note onto it.
+        let Some((s, e)) = span else { return (notes, words) };
+        let mut kept: Vec<Note> =
+            notes.into_iter().filter(|n| n.time >= s - 1e-6 && n.time < e - 1e-6).collect();
+        let mut sliced: Vec<String> = Vec::new();
+        let mut last_word = usize::MAX;
+        for n in &mut kept {
+            if n.word != last_word {
+                last_word = n.word;
+                sliced.push(String::new());
             }
+            n.word = sliced.len() - 1;
+            sliced.last_mut().unwrap().push(n.ch);
         }
+        (kept, sliced)
+    }
 
-        let first = notes.first().map_or(0.0, |n| n.time);
-        // Beat interval measured AT the first note — charts can change tempo
-        // (or open with a placeholder bar) before the notes start, so
-        // beats[1]-beats[0] can count at the wrong speed
-        let spb = beat_interval_at(&chart.beats, first);
-        let end_time = chart.end + 3.0;
-        // The stems begin at exactly timeline zero. Count-in: four hi-hat
-        // ticks on the real beat grid walking into the FIRST NOTE — matching
-        // the on-screen countdown. (Counting into timeline zero is useless:
-        // charts pad seconds of empty bars before the notes.) The grid
-        // extends backward, and the lead-in stretches, when a chart opens
-        // immediately.
-        let bi = chart.beats.partition_point(|&b| b < first - 1e-6);
-        let ticks: Vec<f64> = (1..=4usize)
-            .map(|k| bi.checked_sub(k).map_or(first - k as f64 * spb, |j| chart.beats[j]))
+    /// A fresh practice run over a different section range, reusing this
+    /// run's chart and decoded stems (Arc clones — nothing is re-decoded)
+    /// and keeping the current speed and reseed setting.
+    pub fn with_range(&self, range: (usize, usize), engine: &AudioEngine, snd: &Sounds) -> Play {
+        let mut fresh = Play::new_chart(
+            self.song_ref.song,
+            self.song_ref.diff,
+            &self.chart,
+            engine,
+            snd,
+            self.backing.clone(),
+            self.lead.clone(),
+            Some(range),
+            self.practice.as_ref().map_or(1.0, |p| p.rate),
+        );
+        if let (Some(np), Some(op)) = (fresh.practice.as_mut(), self.practice.as_ref()) {
+            np.reseed = op.reseed;
+        }
+        fresh
+    }
+
+    /// (Re)start the timeline for the practice span: position parked just
+    /// ahead of a count-in that ticks the beats walking into the span's
+    /// first note, stems silent until the span begins, all at the practice
+    /// rate. Also re-aims the beat-flash cursor at where playback resumes.
+    fn start_practice_timeline(&mut self, engine: &AudioEngine, snd: &Sounds) {
+        let Some(pr) = &self.practice else { return };
+        let rate = pr.rate;
+        let first = self.first_note_time;
+        let bi = self.beats.partition_point(|&b| b < first - 1e-6);
+        // Slowed way down, a four-beat count-in drags on for many real
+        // seconds — two beats is plenty of runway there.
+        let n_ticks = if self.spb / rate > 1.05 { 2usize } else { 4 };
+        let ticks: Vec<f64> = (1..=n_ticks)
+            .map(|k| bi.checked_sub(k).map_or(first - k as f64 * self.spb, |j| self.beats[j]))
             .collect();
-        // ...but only when the recording is quiet under them. Plenty of rips
-        // open with their own stick count or a musical intro; a synthesized
-        // click on top plays flams against the one or fights the other, so
-        // there the recording itself is the count. "Most quiet", not "all":
-        // the last tick often brushes the swell of the music coming in.
-        let quiet_at = |t: f64| {
-            let mut r = rms_around(&backing, engine.sample_rate, t);
-            if let Some(l) = &lead {
-                r += rms_around(l, engine.sample_rate, t);
-            }
-            r < 0.05
-        };
-        let count_in = ticks.iter().filter(|&&t| quiet_at(t)).count() >= 3;
-        let earliest = ticks.last().copied().unwrap_or(0.0);
-        let lead_in = if count_in { (0.4 - earliest).max(3.0) } else { 3.0 };
-        engine.start_timeline(lead_in, Some(backing), lead);
-        if count_in {
-            for &t in &ticks {
-                engine.play_at(&snd.hat, 0.8, t);
+        let earliest = ticks.last().copied().unwrap_or(first);
+        // ~a third of a real second of silence before the first tick
+        let p0 = earliest - 0.35 * rate;
+        engine.start_timeline_at(
+            0.12,
+            p0,
+            rate,
+            pr.span.0,
+            Some(self.backing.clone()),
+            self.lead.clone(),
+        );
+        for &t in &ticks {
+            engine.play_at(&snd.hat, 0.8, t);
+        }
+        self.next_beat = self.beats.partition_point(|&b| b <= p0);
+    }
+
+    /// Fresh words on the same gems, for the next practice pass — so
+    /// drilling a section drills the notes, not one memorized deal. WORDS
+    /// (FIXED) is exempt: its whole point is that a song always deals the
+    /// same letters, and practice must mirror the real run exactly.
+    fn reshuffle_words(&mut self) {
+        if text_mode() == TextMode::WordsFixed {
+            return;
+        }
+        let lens: Vec<usize> = self.words.iter().map(|w| w.len()).collect();
+        let words = generate_text(&lens);
+        for (i, n) in self.notes.iter_mut().enumerate() {
+            let li = i - self.word_starts[n.word];
+            if let Some(&b) = words.get(n.word).and_then(|w| w.as_bytes().get(li)) {
+                n.ch = b as char;
+                n.lane = gem_lane(n.ch);
             }
         }
-        Self::from_parts(
-            SongRef { song: song_idx, diff, instrument: chart.instrument },
-            chart.title.clone(),
-            DIFF_NAMES[diff].to_string(),
-            notes,
-            words,
-            chart.beats.clone(),
-            sp_phrases,
-            spb,
-            first,
-            end_time,
-        )
+        self.words = words;
+    }
+
+    /// Rewind the practice span for another pass: every note back to
+    /// pending, the pass's stats cleared, fresh words dealt, and the
+    /// timeline re-parked at the count-in. Also serves as the pause menu's
+    /// "restart section".
+    pub fn restart_loop(&mut self, engine: &AudioEngine, snd: &Sounds) {
+        if self.practice.is_none() {
+            return;
+        }
+        if self.practice.as_ref().is_some_and(|p| p.reseed) {
+            self.reshuffle_words();
+        }
+        for n in &mut self.notes {
+            n.state = NoteState::Pending;
+        }
+        for p in &mut self.sp_phrases {
+            p.hits = 0;
+            p.broken = false;
+        }
+        self.holds.clear();
+        if self.whammying {
+            self.whammying = false;
+            engine.set_whammy(0.0);
+        }
+        self.whammy_vis = 0.0;
+        if self.ducked {
+            self.ducked = false;
+            engine.set_lead_gain(1.0);
+        }
+        self.energy = 0.0;
+        self.sp_until = f64::NEG_INFINITY;
+        if self.sp_prev {
+            engine.set_sp_fx(0.0);
+        }
+        self.sp_prev = false;
+        self.sp_flash = 0.0;
+        self.spark_acc = 0.0;
+        self.score = 0;
+        self.combo = 0;
+        self.max_combo = 0;
+        self.perfect = 0;
+        self.great = 0;
+        self.good = 0;
+        self.miss = 0;
+        self.strays = 0;
+        self.cursor = 0;
+        self.word_anim = 0.0;
+        self.particles.clear();
+        self.floaters.clear();
+        self.shake = 0.0;
+        self.last_miss_fb = f64::NEG_INFINITY;
+        self.start_practice_timeline(engine, snd);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -548,6 +777,10 @@ impl Play {
         spb: f64,
         first_note_time: f64,
         end_time: f64,
+        chart: SongChart,
+        backing: Buf,
+        lead: Option<Buf>,
+        practice: Option<PracticeState>,
     ) -> Self {
         let mut word_starts = vec![notes.len(); words.len()];
         for (i, n) in notes.iter().enumerate().rev() {
@@ -596,6 +829,10 @@ impl Play {
             beat_flash: 0.0,
             first_note_time,
             end_time,
+            practice,
+            chart,
+            backing,
+            lead,
         }
     }
 
@@ -822,6 +1059,16 @@ impl Play {
         let dt = get_frame_time();
         let g = geom();
 
+        // Practice loops: a beat's worth of real time past the span's end,
+        // the run rewinds for another pass instead of ever finishing.
+        if let Some(pr) = &mut self.practice {
+            if jnow > pr.span.1 + 0.8 * pr.rate {
+                pr.loops += 1;
+                self.restart_loop(engine, snd);
+                return;
+            }
+        }
+
         // Visual pulse on each beat (beat times come from the tempo map)
         while self.next_beat < self.beats.len() && self.beats[self.next_beat] <= jnow {
             self.beat_flash = 1.0;
@@ -969,7 +1216,8 @@ impl Play {
     }
 
     pub fn finished(&self, now: f64) -> bool {
-        now > self.end_time + 1.0
+        // A practice run never finishes — it loops until the player quits
+        self.practice.is_none() && now > self.end_time + 1.0
     }
 
     fn hits(&self) -> u32 {
@@ -1483,6 +1731,37 @@ impl Play {
         let pct = format!("{:.0}%", frac * 100.0);
         draw_fit(&pct, rcx, 228.0 * k, 15.0 * k, col_w, gut(0.4));
 
+        // Practice mode is labeled loudly — nobody should mistake a slowed
+        // loop for a real run. Banner across the top; the section being
+        // played and the loop count join the song column in the right gutter.
+        if let Some(pr) = &self.practice {
+            draw_centered(
+                &format!("PRACTICE MODE  ·  SPEED {:.0}%", pr.rate * 100.0),
+                44.0 * k,
+                19.0 * k,
+                wa(th().accent, 0.85),
+            );
+            draw_centered("LEFT / RIGHT change speed", 68.0 * k, 13.0 * k, wa(th().secondary, 0.4));
+            let (lo, hi) = pr.range;
+            let cur = pr.sections[lo..=hi]
+                .iter()
+                .rev()
+                .find(|s| now >= s.start)
+                .unwrap_or(&pr.sections[lo]);
+            draw_fit(&cur.name, rcx, 254.0 * k, 15.0 * k, col_w, wa(th().accent, 0.6));
+            draw_fit(&format!("LOOP {}", pr.loops + 1), rcx, 276.0 * k, 15.0 * k, col_w, gut(0.4));
+            // The reseed flag, wherever it applies (WORDS (FIXED) never
+            // reshuffles, so there it isn't shown at all)
+            if text_mode() != TextMode::WordsFixed {
+                let (label, col) = if pr.reseed {
+                    ("RESEED ON", wa(th().accent, 0.5))
+                } else {
+                    ("RESEED OFF", gut(0.35))
+                };
+                draw_fit(label, rcx, 298.0 * k, 15.0 * k, col_w, col);
+            }
+        }
+
         // Combo
         if self.combo >= 4 {
             let text = format!("{}", self.combo);
@@ -1617,6 +1896,51 @@ mod phrase_tests {
         let mut gaps = vec![0.05];
         gaps.extend([0.19; 20]);
         assert_eq!(split_gaps(&gaps), vec![8, 8, 6]);
+    }
+
+    /// Practicing a section must deal exactly the letters the full song
+    /// deals at that spot — in WORDS (FIXED) especially, or drilling a solo
+    /// wouldn't transfer to the real run. Checks every section of a bundled
+    /// chart against the full-song deal, and that each sliced word's letters
+    /// match its gems.
+    #[test]
+    fn practice_slice_matches_full_song_deal() {
+        let path = std::path::Path::new("songs/Discipline.sng");
+        if !path.exists() {
+            return;
+        }
+        let source = crate::chart::SongSource::Sng(path.to_path_buf());
+        let charts = crate::chart::load_song(&source).expect("bundled song should parse");
+        let chart = crate::chart::pick_chart(charts, crate::chart::Instrument::Guitar)
+            .expect("guitar chart");
+        // Pin the mode to WORDS (FIXED) — index 1 in TEXT_MODES — and restore.
+        use crate::words::TEXT_MODE_IDX;
+        let prev = TEXT_MODE_IDX.swap(1, std::sync::atomic::Ordering::Relaxed);
+        let (full, _) = Play::deal_notes(&chart, 3, None);
+        let mut sliced_total = 0;
+        for sec in &chart.sections {
+            let (sliced, words) = Play::deal_notes(&chart, 3, Some((sec.start, sec.end)));
+            sliced_total += sliced.len();
+            for (i, n) in sliced.iter().enumerate() {
+                let m = full
+                    .iter()
+                    .find(|f| (f.time - n.time).abs() < 1e-9)
+                    .expect("sliced note exists in the full deal");
+                assert_eq!(n.ch, m.ch, "letter differs at t={:.3} in {}", n.time, sec.name);
+                let li = i - sliced.iter().position(|x| x.word == n.word).unwrap();
+                assert_eq!(
+                    words[n.word].as_bytes()[li] as char,
+                    n.ch,
+                    "queue letter differs from gem in {}",
+                    sec.name
+                );
+            }
+        }
+        TEXT_MODE_IDX.store(prev, std::sync::atomic::Ordering::Relaxed);
+        // Interior sections partition the notes: nothing lost, nothing doubled
+        // (the last section's slice stops just short of the closing note —
+        // new_chart widens that end at runtime, not deal_notes).
+        assert!(sliced_total >= full.len() - 1, "{sliced_total} of {} notes", full.len());
     }
 
     /// The motivating chart: Code Monkey on hard is triplet cells. The dealt

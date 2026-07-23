@@ -8,6 +8,17 @@ A rhythm typing game, copying off the homework of the wonderful project [Clone H
 cargo run --release
 ```
 
+## Practice mode
+
+Hold **SHIFT** when pressing **ENTER** on a song to practice it Clone Hero
+style: pick the section where practice starts, then the section where it ends
+(the same row twice loops just that one), and the span plays on repeat with a
+count-in before each pass. **LEFT / RIGHT** arrows change the game speed from
+25% to 200% in 5% steps — slow motion for drilling, overclock for burn-in.
+The pause screen (**ESC**) can restart the section, change which sections are
+looped, or adjust the speed. Charts without section markers get automatic
+8-measure parts.
+
 ## Acquiring songs
 
 A few freely-licensed songs are bundled to play out of the box (see
