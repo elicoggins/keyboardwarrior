@@ -159,6 +159,54 @@ fn chorus_list_geom(k: f32) -> (f32, f32, usize) {
     (list_top, row_h, visible)
 }
 
+/// Longest prefix of `s` (starting at char index `from`) whose rendered width
+/// fits `avail`. Used to clip a Chorus row so it never spills over the
+/// scrollbar; the font carries no ellipsis glyph, so it's a hard cut.
+#[cfg(not(target_arch = "wasm32"))]
+fn fit_from(s: &str, from: usize, size: f32, avail: f32) -> String {
+    let mut out = String::new();
+    for ch in s.chars().skip(from) {
+        out.push(ch);
+        if msize(&out, size).width > avail {
+            out.pop();
+            break;
+        }
+    }
+    out
+}
+
+/// The visible slice of a title that overflows the list width, panned by a
+/// discrete beat so a hovered row reveals its tail. Holds at the left, steps
+/// one character right per beat until the end shows, holds there, then loops.
+/// `elapsed` is seconds since the row became selected.
+#[cfg(not(target_arch = "wasm32"))]
+fn marquee_slice(s: &str, size: f32, avail: f32, elapsed: f64) -> String {
+    // The furthest-left char index that still shows the whole tail — no point
+    // panning past it.
+    let n = s.chars().count();
+    let mut max_start = 0;
+    for start in 0..n {
+        if msize(&s.chars().skip(start).collect::<String>(), size).width <= avail {
+            max_start = start;
+            break;
+        }
+    }
+    // Rhythm: one step per BEAT, with a pause of a few beats at each end so the
+    // start and end are readable before the pan moves on.
+    const BEAT: f64 = 0.4;
+    const HOLD: usize = 3;
+    let cycle = HOLD + max_start + HOLD;
+    let tick = ((elapsed / BEAT) as usize) % cycle.max(1);
+    let start = if tick < HOLD {
+        0
+    } else if tick < HOLD + max_start {
+        tick - HOLD
+    } else {
+        max_start
+    };
+    fit_from(s, start, size, avail)
+}
+
 /// The next selectable song when moving through the (already filtered) menu
 /// `view`. Steps one row in `dir` (Up/anything-else = Down), wrapping, and
 /// skips locked signpost rows. `sel` and the result are full-list indices;
@@ -242,6 +290,12 @@ struct ChorusScene {
     query_active: String,                  // query the loaded results belong to
     diff_active: Option<String>,           // difficulty the loaded results belong to
     more_net: Option<Receiver<ChorusMsg>>, // in-flight next-page fetch, if any
+    // Marquee for the selected row's title: a too-long title is clipped to the
+    // list width and pans right beat by beat while it's hovered. `mq_sel`/`mq_t0`
+    // anchor the pan's phase so it restarts from the left each time the
+    // selection lands on a new row.
+    mq_sel: usize,
+    mq_t0: f64,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -882,6 +936,8 @@ async fn main() {
                         query_active: String::new(),
                         diff_active: None,
                         more_net: None,
+                        mq_sel: 0,
+                        mq_t0: 0.0,
                     }));
                     // Swallow the 'g' that opened this screen so it doesn't land
                     // in the search box on the next frame.
@@ -2487,6 +2543,18 @@ async fn main() {
                 // pull it back so the list can't sit with a blank tail
                 cs.scroll = cs.scroll.min(cs.hits.len().saturating_sub(visible));
 
+                // Restart the title marquee whenever the selection lands on a
+                // new row, so its pan always begins from the left.
+                if cs.mq_sel != cs.sel {
+                    cs.mq_sel = cs.sel;
+                    cs.mq_t0 = get_time();
+                }
+                let mq_elapsed = get_time() - cs.mq_t0;
+                // Width a row's text may occupy before it would reach the
+                // scrollbar; titles wider than this are clipped (and the
+                // hovered one panned).
+                let text_avail = box_w - 14.0 * k - 6.0 * k;
+
                 // Selection band, bracketed to the two lines of the row from
                 // the font's own metrics: `dtext` puts a string's ink in
                 // `Rect(x, y - offset_y, w, h)`, so a band hung off the title's
@@ -2515,12 +2583,20 @@ async fn main() {
                         draw_rectangle(bx, y + band_top, box_w, band_h, wa(th().accent, 0.10));
                     }
                     let name_a = if selected { 0.95 } else { 0.7 };
-                    dtext(&hit.name, bx + 14.0 * k, y, 22.0 * k, Color::new(1.0, 1.0, 1.0, name_a));
+                    // Clip the title to the list width; the hovered row's
+                    // overflowing title pans right so its tail scrolls in.
+                    let title = if selected && msize(&hit.name, 22.0 * k).width > text_avail {
+                        marquee_slice(&hit.name, 22.0 * k, text_avail, mq_elapsed)
+                    } else {
+                        fit_from(&hit.name, 0, 22.0 * k, text_avail)
+                    };
+                    dtext(&title, bx + 14.0 * k, y, 22.0 * k, Color::new(1.0, 1.0, 1.0, name_a));
                     let sub = if hit.charter.is_empty() {
                         hit.artist.clone()
                     } else {
                         format!("{}   ·   charter: {}", hit.artist, hit.charter)
                     };
+                    let sub = fit_from(&sub, 0, 16.0 * k, text_avail);
                     dtext(&sub, bx + 14.0 * k, y + 22.0 * k, 16.0 * k, wa(th().secondary, 0.7));
                 }
 
