@@ -1826,10 +1826,13 @@ pub struct Results {
     pub miss: u32,
     pub strays: u32,
     pub accuracy: f64,
-    // Whether this run beat a stored personal best (a first clear doesn't
-    // count), and the score it beat, for the results banner.
-    pub new_best: bool,
-    pub prev_best: Option<i64>,
+    // Personal-best deltas for the results banner. Score and accuracy are
+    // tracked independently, so a run can beat one, the other, or both; each
+    // gain is the improvement over the prior record. `first_best` marks a first
+    // clear (a new best with no prior value, so no deltas to show).
+    pub score_gain: Option<i64>,
+    pub acc_gain: Option<f64>,
+    pub first_best: bool,
 }
 
 impl Results {

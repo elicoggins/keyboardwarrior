@@ -1253,37 +1253,99 @@ async fn main() {
                     // rows (which are packed too tight for a fourth detail line).
                     #[cfg(not(target_arch = "wasm32"))]
                     if selected && focus > 0.5 {
-                        if let Some(b) = diff_opts.get(*diff_sel).and_then(|&(d, _)| {
-                            scores.best(&song.title, &song.artist, d, words::text_mode_label())
-                        }) {
+                        // Guitar and bass keep separate bests, so a song charted
+                        // for both shows both rows (each labelled), stacked in the
+                        // right margin. Rows share a left edge, right-aligned.
+                        let d = diff_opts.get(*diff_sel).map(|&(d, _)| d).unwrap_or(0);
+                        let bests: Vec<(&str, config::BestScore)> =
+                            [Instrument::Guitar, Instrument::Bass]
+                                .into_iter()
+                                .filter_map(|inst| {
+                                    scores
+                                        .best(
+                                            &song.title,
+                                            &song.artist,
+                                            d,
+                                            words::text_mode_label(),
+                                            inst.label(),
+                                        )
+                                        .map(|b| (inst.label(), b))
+                                })
+                                .collect();
+                        if !bests.is_empty() {
                             let bsize = 15.0 * k;
-                            let txt = format!("best {}  ·  {:.1}%", b.score, b.accuracy);
-                            let dims = msize(&txt, bsize);
                             let pad = 5.0 * k;
-                            let bx = screen_width() - FOOTER_INSET * k - pad - dims.width;
+                            // Three columns — label, score, percent — so the dots
+                            // and percentages line up regardless of digit count or
+                            // the GUITAR/BASS width difference. Numbers are right-
+                            // aligned within their columns off the widest row.
+                            let cols: Vec<(&str, String, String)> = bests
+                                .iter()
+                                .map(|(label, b)| {
+                                    (*label, format!("{}", b.score), format!("{:.1}%", b.accuracy))
+                                })
+                                .collect();
+                            let wmax = |f: &dyn Fn(&(&str, String, String)) -> f32| {
+                                cols.iter().fold(0.0_f32, |m, r| m.max(f(r)))
+                            };
+                            let lw = wmax(&|r| msize(r.0, bsize).width);
+                            let sw = wmax(&|r| msize(&r.1, bsize).width);
+                            let pw = wmax(&|r| msize(&r.2, bsize).width);
+                            let sepw = msize("·", bsize).width;
+                            let gap = bsize * 0.55;
+                            // The label wants a touch more air than the inter-number
+                            // gaps — GUITAR runs right up against its score otherwise.
+                            let label_gap = bsize * 1.1;
+                            let total = lw + label_gap + sw + gap + sepw + gap + pw;
+                            // Column left edges within the right-aligned block.
+                            let bx = screen_width() - FOOTER_INSET * k - pad - total;
+                            let score_r = bx + lw + label_gap + sw; // score right edge
+                            let sep_x = score_r + gap;
+                            let pct_r = sep_x + sepw + gap + pw; // percent right edge
+                                                                 // A gold border adds pad above and below its row, so the
+                                                                 // step always reserves that room — even for unbordered
+                                                                 // rows — so the layout doesn't shift moving between songs
+                                                                 // where one has a 100% best and the next doesn't.
+                            let rh = msize("GUITAR", bsize).height;
+                            let step = rh + pad * 2.0 + bsize * 0.3;
                             let title_right =
                                 screen_width() / 2.0 + msize(&song.title, size).width / 2.0;
-                            // Skip it if a long title would run into it.
+                            // Skip the whole block if a long title would run into it.
                             if bx > title_right + 24.0 * k {
-                                // A 100% (flawless) best turns gold and gets a
-                                // border; anything less stays a quiet subtitle.
-                                let perfect = b.accuracy >= 100.0;
-                                if perfect {
-                                    draw_rectangle_lines(
-                                        bx - pad,
-                                        y - dims.offset_y - pad,
-                                        dims.width + pad * 2.0,
-                                        dims.height + pad * 2.0,
-                                        2.0 * k,
-                                        wa(th().accent, 0.85 * a),
+                                for (i, ((_, score, pct), (label, b))) in
+                                    cols.iter().zip(bests.iter()).enumerate()
+                                {
+                                    let ry = y + i as f32 * step;
+                                    let dims = msize(label, bsize);
+                                    // A 100% (flawless) best turns gold and gets a
+                                    // border; anything less stays a quiet subtitle.
+                                    let perfect = b.accuracy >= 100.0;
+                                    if perfect {
+                                        draw_rectangle_lines(
+                                            bx - pad,
+                                            ry - dims.offset_y - pad,
+                                            total + pad * 2.0,
+                                            dims.height + pad * 2.0,
+                                            2.0 * k,
+                                            wa(th().accent, 0.85 * a),
+                                        );
+                                    }
+                                    let col = if perfect {
+                                        wa(th().accent, a)
+                                    } else {
+                                        wa(th().secondary, 0.6 * a)
+                                    };
+                                    dtext(label, bx, ry, bsize, col);
+                                    dtext(
+                                        score,
+                                        score_r - msize(score, bsize).width,
+                                        ry,
+                                        bsize,
+                                        col,
                                     );
+                                    dtext("·", sep_x, ry, bsize, col);
+                                    dtext(pct, pct_r - msize(pct, bsize).width, ry, bsize, col);
                                 }
-                                let col = if perfect {
-                                    wa(th().accent, a)
-                                } else {
-                                    wa(th().secondary, 0.6 * a)
-                                };
-                                dtext(&txt, bx, y, bsize, col);
                             }
                         }
                     }
@@ -1842,27 +1904,36 @@ async fn main() {
 
                 if play.finished(now) {
                     engine.stop_timeline();
-                    // Record the run and see whether it set a personal best.
-                    // Any new best is announced (a first clear included); the
-                    // banner just drops the "+delta" when there's nothing prior.
+                    // Record the run. Score and accuracy improve independently,
+                    // so the banner may announce a gain in either or both; a
+                    // first clear is a new best with no prior value to delta.
                     #[cfg(not(target_arch = "wasm32"))]
-                    let (new_best, prev_best) = {
+                    let (score_gain, acc_gain, first_best) = {
                         let artist = songs[play.song_ref.song].artist.clone();
                         let rec = scores.record(
                             &play.title,
                             &artist,
                             play.song_ref.diff,
                             words::text_mode_label(),
+                            play.song_ref.instrument.label(),
                             config::BestScore {
                                 score: play.score,
                                 accuracy: play.accuracy(),
                                 max_combo: play.max_combo,
                             },
                         );
-                        (rec.improved, rec.prev_best)
+                        (
+                            rec.score_gain.map(|(prev, now)| now - prev),
+                            rec.acc_gain.map(|(prev, now)| now - prev),
+                            rec.first,
+                        )
                     };
                     #[cfg(target_arch = "wasm32")]
-                    let (new_best, prev_best): (bool, Option<i64>) = (false, None);
+                    let (score_gain, acc_gain, first_best): (
+                        Option<i64>,
+                        Option<f64>,
+                        bool,
+                    ) = (None, None, false);
                     scene = Scene::Results(Results {
                         song_ref: play.song_ref,
                         title: play.title.clone(),
@@ -1875,8 +1946,9 @@ async fn main() {
                         miss: play.miss,
                         strays: play.strays,
                         accuracy: play.accuracy(),
-                        new_best,
-                        prev_best,
+                        score_gain,
+                        acc_gain,
+                        first_best,
                     });
                 }
             }
@@ -1930,16 +2002,23 @@ async fn main() {
                     24.0 * k,
                     Color::new(1.0, 1.0, 1.0, 0.7),
                 );
-                // Personal-best banner: only when this run beat a prior best.
-                // Bests rank by accuracy, so a new best can carry a lower score
-                // — only surface the "+delta" when the score actually climbed.
-                if r.new_best {
+                // Personal-best banner: shown on a first clear or whenever this
+                // run beat a stored best. Score and accuracy improve
+                // independently, so each carries its own "+delta" — one, the
+                // other, or both, depending on which climbed.
+                if r.first_best || r.score_gain.is_some() || r.acc_gain.is_some() {
                     let pulse = ((get_time() * 3.0).sin() * 0.5 + 0.5) as f32;
-                    let msg = match r.prev_best {
-                        Some(prev) if r.score > prev => {
-                            format!("NEW PERSONAL BEST!   +{}", r.score - prev)
-                        }
-                        _ => "NEW PERSONAL BEST!".to_string(),
+                    let mut deltas = Vec::new();
+                    if let Some(g) = r.score_gain {
+                        deltas.push(format!("+{g}"));
+                    }
+                    if let Some(g) = r.acc_gain {
+                        deltas.push(format!("+{g:.1}%"));
+                    }
+                    let msg = if deltas.is_empty() {
+                        "NEW PERSONAL BEST!".to_string()
+                    } else {
+                        format!("NEW PERSONAL BEST!   {}", deltas.join("   ·   "))
                     };
                     draw_centered(&msg, 424.0 * k, 22.0 * k, wa(th().accent, 0.6 + 0.4 * pulse));
                 }
