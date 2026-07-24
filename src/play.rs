@@ -1145,9 +1145,7 @@ impl Play {
         let whammy = shift && !self.holds.is_empty();
         let sp_whammy = whammy
             && self.holds.iter().any(|h| {
-                self.notes[h.note]
-                    .sp_phrase
-                    .is_some_and(|p| !self.sp_phrases[p as usize].broken)
+                self.notes[h.note].sp_phrase.is_some_and(|p| !self.sp_phrases[p as usize].broken)
             });
         if sp_whammy {
             self.energy = (self.energy + dt * 0.05).min(1.0);
