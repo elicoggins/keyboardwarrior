@@ -12,18 +12,52 @@ Grab the latest build from the [Releases page](../../releases).
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon) | `KeyboardWarrior-macOS.zip` |
-| Linux (x86-64) | `keyboardwarrior-linux.tar.gz` |
+| macOS (Apple Silicon **and** Intel) | `KeyboardWarrior-<version>-macOS-universal.zip` |
+| Windows (x86-64) | `KeyboardWarrior-<version>-windows-x86_64.zip` |
+| Linux (x86-64) | `KeyboardWarrior-<version>-linux-x86_64.tar.gz` |
 
-Six freely-licensed songs ship with the game, so it plays out of the box.
+Six freely-licensed songs ship with the game, so it plays out of the box, and
+there's no installer — unpack it wherever you like.
+
+Every release also carries a `SHA256SUMS.txt`. If you want to check your
+download arrived intact, put it beside the archive and run:
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS.txt   # Linux
+shasum -a 256 -c SHA256SUMS.txt                # macOS
+```
+
+```powershell
+Get-FileHash .\KeyboardWarrior-*.zip -Algorithm SHA256   # Windows
+```
+
+The game isn't code-signed on macOS or Windows — that means a certificate I'd
+have to rent annually, and this is free software. Both systems will warn you
+about it the first time. Here's how to get past each.
 
 ### macOS: first launch
 
-The app isn't signed with an Apple Developer certificate, so macOS will refuse
-to open it on the first try and say it can't verify the developer.
+macOS will refuse to open the app and say it can't verify the developer.
 
-**Right-click the app → Open → Open.** You only have to do this once; after
-that it launches normally.
+1. Double-click the app. macOS blocks it — click **Done**.
+2. Open **System Settings → Privacy & Security**, scroll to the Security
+   section, and click **Open Anyway** next to the message about Keyboard
+   Warrior.
+3. Confirm with **Open Anyway** and authenticate.
+
+You only have to do this once; after that it launches normally.
+
+(On older macOS you could right-click → Open instead. Apple removed that
+shortcut in macOS 15 Sequoia, so the trip through System Settings is now the
+only way.)
+
+### Windows: first launch
+
+Unzip the folder anywhere and run `keyboardwarrior.exe`. Keep the `songs`
+folder next to it — that's where the game looks for the music it ships with.
+
+Windows Defender SmartScreen will show a blue **"Windows protected your PC"**
+box. Click **More info**, then **Run anyway**. Once again, only the first time.
 
 ### Linux
 
@@ -84,7 +118,7 @@ with thanks to the artists and to the charters who built the note charts.
 | Song | Artist | License | Chart |
 | --- | --- | --- | --- |
 | Code Monkey | Jonathan Coulton | [CC BY-NC 3.0](https://creativecommons.org/licenses/by-nc/3.0/) | NoisyPuppet |
-| Shop Vac | Jonathan Coulton | [CC BY-NC 3.0](https://creativecommons.org/licenses/by-nc/3.0/) | RockGamer |
+| Creepy Doll | Jonathan Coulton | [CC BY-NC 3.0](https://creativecommons.org/licenses/by-nc/3.0/) | RockGamer |
 | Re: Your Brains | Jonathan Coulton | [CC BY-NC 3.0](https://creativecommons.org/licenses/by-nc/3.0/) | Harmonix |
 | Dirtbag | Brad Sucks | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) | JRabes |
 | Certain Death | Brad Sucks | [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/) | MB1Nightmare & Greninjo |
@@ -108,10 +142,15 @@ bundled music and note charts are not mine to relicense — they remain under th
 Creative Commons terms listed above, and several are NonCommercial, so the
 packaged game as a whole may not be sold or redistributed commercially.
 
-Third-party open-source components are listed in
+The full terms are in [LICENSE.md](LICENSE.md), and the third-party open-source
+components the game is built on are listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+The game's source is not public. This repo is the download page.
 
 ## Bugs
 
-Something broken? [Open an issue](../../issues) — include the version from the
-options screen and, if it's a specific song, which one.
+Something broken? [Open an issue](../../issues/new/choose) — include the version
+from the options screen and, if it's a specific song, which one.
+
+What changed between versions is in [CHANGELOG.md](CHANGELOG.md).

@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in the game is broken or behaves wrong
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The two things that make a bug fixable are the
+        version and the platform — everything else can usually be worked out
+        from those plus what you saw.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Shown on the options screen (press **O** in-game).
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Windows
+        - Linux
+        - Browser demo
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what the game did instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the game
+        2. ...
+    validations:
+      required: true
+
+  - type: input
+    id: song
+    attributes:
+      label: Song
+      description: >
+        If it only happens on one song, name it — and say whether it's a bundled
+        song or one you added, and where the chart came from.
+      placeholder: "Code Monkey (bundled)"
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: >
+        Screenshots, a crash message, or terminal output if you launched it from
+        a terminal. Drag images straight into this box.
