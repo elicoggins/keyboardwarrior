@@ -23,6 +23,19 @@ The `.opus` decoder links **libopus**, © the Xiph.Org Foundation and
 contributors, distributed under the 3-clause BSD license. Source:
 https://github.com/xiph/opus
 
+## macroquad
+
+**macroquad is shipped modified.** One function in `src/text/atlas.rs` is
+changed: when the glyph atlas overflows and re-packs every sprite into a larger
+texture, the sprites are sorted tallest-first rather than replayed in hash-map
+iteration order. That order is seeded per process, so upstream's re-pack was a
+per-launch lottery that could land the game anywhere from 334 MiB to several
+gigabytes of texture memory on the same binary. Nothing else in the crate is
+touched, and the change is offered upstream.
+
+macroquad is distributed under MIT OR Apache-2.0. Source:
+https://github.com/not-fl3/macroquad
+
 ## Full dependency list
 
 | Crate | Version | License |
@@ -79,7 +92,7 @@ https://github.com/xiph/opus
 | litemap | 0.8.2 | Unicode-3.0 |
 | log | 0.4.33 | MIT OR Apache-2.0 |
 | mach2 | 0.4.3 | BSD-2-Clause OR MIT OR Apache-2.0 |
-| macroquad | 0.4.15 | MIT OR Apache-2.0 |
+| macroquad | 0.4.15 (modified, see above) | MIT OR Apache-2.0 |
 | macroquad_macro | 0.1.8 | MIT/Apache-2.0 |
 | malloc_buf | 0.0.6 | MIT |
 | memchr | 2.8.3 | Unlicense OR MIT |

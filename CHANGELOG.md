@@ -5,7 +5,7 @@ Notable changes to Keyboard Warrior, newest first. Versions follow
 digit adds things, the major digit is reserved for a release that changes how
 saved settings, scores or song libraries work.
 
-## 1.0.0 — 2026-07-29
+## 1.0.0 — 2026-07-30
 
 First public release.
 

@@ -33,8 +33,10 @@ only way.)
 
 ### Windows: first launch
 
-Unzip the folder anywhere and run `keyboardwarrior.exe`. Keep the `songs`
-folder next to it — that's where the game looks for the music it ships with.
+Unzip the folder anywhere and run `keyboardwarrior.exe`. Keep the
+`bundled_songs` folder next to it — that's where the game looks for the music it
+ships with. (Your own songs go somewhere else, so a newer build can't wipe
+them; see [Adding your own songs](#adding-your-own-songs).)
 
 Windows Defender SmartScreen will show a blue **"Windows protected your PC"**
 box. Click **More info**, then **Run anyway**. Once again, only the first time.
