@@ -1,9 +1,11 @@
 # Keyboard Warrior
 
-A rhythm typing game.
-Built in Rust, inspired by the wonderful [Clone Hero](https://clonehero.net).
+A rhythm typing game built in Rust. 
+Copying off the homework of the wonderful projects [Clone Hero](https://clonehero.net) and [YARG](https://yarg.in/).
 
-**[▶ Play the demo in your browser](https://elicoggins.github.io/keyboardwarrior/)**
+Free, lightweight, and compatible with your existing chart library.
+
+**[▶ Check out the browser demo](https://elicoggins.github.io/keyboardwarrior/)**
 
 ## Download
 
@@ -17,26 +19,24 @@ Grab the latest build from the [Releases page](../../releases).
 
 ### macOS: first launch
 
-macOS will refuse to open the app and say it can't verify the developer.
+macOS will be annoying and refuse to open the app.
 
-1. Double-click the app. macOS blocks it — click **Done**.
-2. Open **System Settings → Privacy & Security**, scroll to the Security
+1. Download the binary and stick it in your Applications folder.
+2. Double-click the app and macOS will block it. Click **Done**.
+3. Open **System Settings → Privacy & Security**, scroll to the Security
    section, and click **Open Anyway** next to the message about Keyboard
    Warrior.
-3. Confirm with **Open Anyway** and authenticate.
+4. Confirm with **Open Anyway** and authenticate.
 
-You only have to do this once; after that it launches normally.
+You only have to do this once - after that it launches normally.
 
 (On older macOS you could right-click → Open instead. Apple removed that
-shortcut in macOS 15 Sequoia, so the trip through System Settings is now the
-only way.)
+shortcut in macOS 15 Sequoia)
 
 ### Windows: first launch
 
 Unzip the folder anywhere and run `keyboardwarrior.exe`. Keep the
-`bundled_songs` folder next to it — that's where the game looks for the music it
-ships with. (Your own songs go somewhere else, so a newer build can't wipe
-them; see [Adding your own songs](#adding-your-own-songs).)
+`bundled_songs` folder next to it — that's where the game looks for the bundled music.
 
 Windows Defender SmartScreen will show a blue **"Windows protected your PC"**
 box. Click **More info**, then **Run anyway**. Once again, only the first time.
@@ -46,35 +46,36 @@ box. Click **More info**, then **Run anyway**. Once again, only the first time.
 Unpack anywhere and run `./keyboardwarrior`. You'll need ALSA available
 (`libasound2` on Debian/Ubuntu).
 
+(Thank you Linus)
+
 ## Playing
 
-Notes fall down the lanes; type the letter shown on each one as it crosses the
-strike line. Longer streaks build your multiplier.
+Keyboard Warrior puts a spin on Guitar Hero-like rhythm games by assigning a letter to each note forming words. Type the corresponding letter in rhythm to hit the note. **SPACE** unleashes your star power and **SHIFT** is your whammy bar.
 
 - **ENTER** — start the selected song
 - **SHIFT + ENTER** — practice mode: pick a start and end section, loop it,
   and use **LEFT / RIGHT** to run it anywhere from 25% to 200% speed
 - **S** — cycle how the library is sorted (title, collection, artist, album,
   decade, genre)
-- **Hold SPACE** — jump popup, for moving through a long library a group at a
-  time
-- **O** — options, including latency calibration
+- **Hold SPACE** — jump between category sections
+- **O** — options
 - **ESC** — pause
 
 Calibrate your latency the first time you play (**O** → calibration). Every
 display and audio setup has some delay, and the game can't judge your timing
 fairly until it knows yours.
 
+If you change your setup (switch to headphones, etc) **O** to recalibrate takes seconds.
+
 ## Adding your own songs
 
-Keyboard Warrior reads the same charts as other rhythm games. Drop either form
-into your songs folder:
+Keyboard Warrior reads the same charts as other rhythm games, which means there's tons of resources online. Drop either standard format into your songs folder:
 
 - a **`.sng`** file
 - a **song folder** (`notes.mid` / `notes.chart`, `song.ini`, and audio stems
   as `.opus` / `.ogg` / `.mp3` / `.wav`)
 
-Or point the app right at your existing library.
+Keyboard Warrior also ships with a built-in bridge to [Chorus Encore](https://www.enchor.us/) - Search and download community charts from right inside the app.
 
 Your songs live outside the app, so replacing it with a newer build never
 touches your library:
@@ -83,6 +84,8 @@ touches your library:
 | --- | --- | --- |
 | Your songs | `~/Library/Application Support/keyboardwarrior/songs/` | `~/.local/share/keyboardwarrior/songs/` |
 | Settings and scores | `~/Library/Application Support/keyboardwarrior/` | `~/.config/keyboardwarrior/` |
+
+Or point the app right at your existing library. Multiple directories supported at one time.
 
 ## Bundled music
 
@@ -104,7 +107,7 @@ Music by [Jonathan Coulton](https://www.jonathancoulton.com) and
 
 ## Terms
 
-Keyboard Warrior is © 2026 Elijah Coggins. All rights reserved.
+Free to download, play and share.
 
 The full terms are in [LICENSE.md](LICENSE.md), and the third-party open-source
 components the game is built on are listed in
