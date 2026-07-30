@@ -1,10 +1,9 @@
 # Keyboard Warrior
 
-A rhythm typing game — the notes come at you down the lanes, and you type them.
+A rhythm typing game.
 Built in Rust, inspired by the wonderful [Clone Hero](https://clonehero.net).
 
 **[▶ Play the demo in your browser](https://elicoggins.github.io/keyboardwarrior/)**
-— no download, six songs, runs anywhere WebAssembly does.
 
 ## Download
 
@@ -15,25 +14,6 @@ Grab the latest build from the [Releases page](../../releases).
 | macOS (Apple Silicon **and** Intel) | `KeyboardWarrior-<version>-macOS-universal.zip` |
 | Windows (x86-64) | `KeyboardWarrior-<version>-windows-x86_64.zip` |
 | Linux (x86-64) | `KeyboardWarrior-<version>-linux-x86_64.tar.gz` |
-
-Six freely-licensed songs ship with the game, so it plays out of the box, and
-there's no installer — unpack it wherever you like.
-
-Every release also carries a `SHA256SUMS.txt`. If you want to check your
-download arrived intact, put it beside the archive and run:
-
-```sh
-sha256sum --ignore-missing -c SHA256SUMS.txt   # Linux
-shasum -a 256 -c SHA256SUMS.txt                # macOS
-```
-
-```powershell
-Get-FileHash .\KeyboardWarrior-*.zip -Algorithm SHA256   # Windows
-```
-
-The game isn't code-signed on macOS or Windows — that means a certificate I'd
-have to rent annually, and this is free software. Both systems will warn you
-about it the first time. Here's how to get past each.
 
 ### macOS: first launch
 
@@ -67,8 +47,7 @@ Unpack anywhere and run `./keyboardwarrior`. You'll need ALSA available
 ## Playing
 
 Notes fall down the lanes; type the letter shown on each one as it crosses the
-strike line. Longer streaks build your multiplier, missed notes duck the lead
-guitar out of the mix so you can hear yourself falling apart.
+strike line. Longer streaks build your multiplier.
 
 - **ENTER** — start the selected song
 - **SHIFT + ENTER** — practice mode: pick a start and end section, loop it,
@@ -93,19 +72,7 @@ into your songs folder:
 - a **song folder** (`notes.mid` / `notes.chart`, `song.ini`, and audio stems
   as `.opus` / `.ogg` / `.mp3` / `.wav`)
 
-Whole packs go in as they came — a folder of folders, any depth, mixed `.sng`
-and unpacked songs. The scan recurses, and the pack's top-level folder becomes
-a collection heading in the menu. Unzip archives first; that's the one
-exception.
-
-Press **O** → **TAB** → **SONG FOLDERS** to open your songs folder, point the
-game at a library you already have elsewhere, or download charts from Chorus
-Encore without leaving the game.
-
-**add a folder** asks you to type a path, starting at your home folder. **TAB**
-completes a folder name as you go — press it again to step into the folder it
-just completed — then **ENTER** adds it. Whatever you add is remembered, so you
-only do it once per library.
+Or point the app right at your existing library.
 
 Your songs live outside the app, so replacing it with a newer build never
 touches your library:
@@ -133,25 +100,13 @@ Music by [Jonathan Coulton](https://www.jonathancoulton.com) and
 [Brad Sucks](https://www.bradsucks.net). Charts sourced from
 [Chorus Encore](https://www.enchor.us).
 
-The browser demo plays pre-mixed versions of these tracks. Those mixes are
-adaptations of the originals; the ones derived from Brad Sucks' ShareAlike
-material are themselves available under
-[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
-
 ## Terms
 
 Keyboard Warrior is © 2026 Elijah Coggins. All rights reserved.
 
-The game is free to download and play for personal, non-commercial use. The
-bundled music and note charts are not mine to relicense — they remain under the
-Creative Commons terms listed above, and several are NonCommercial, so the
-packaged game as a whole may not be sold or redistributed commercially.
-
 The full terms are in [LICENSE.md](LICENSE.md), and the third-party open-source
 components the game is built on are listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-
-The game's source is not public. This repo is the download page.
 
 ## Bugs
 
