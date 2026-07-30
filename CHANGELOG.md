@@ -17,6 +17,8 @@ First public release.
 - **Your own songs** — reads `.sng` files and unpacked song folders
   (`notes.mid` / `notes.chart`, `song.ini`, `.opus` / `.ogg` / `.mp3` / `.wav`
   stems). Whole song packs go in as they came and are scanned recursively.
+  Point the game at a library anywhere on disk by typing its path, with **TAB**
+  completing folder names as you go.
 - **Library browsing** — sort by title, collection, artist, album, decade or
   genre, with a hold-SPACE jump popup for crossing a long library a group at a
   time.

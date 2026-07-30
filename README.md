@@ -102,6 +102,11 @@ Press **O** → **TAB** → **SONG FOLDERS** to open your songs folder, point th
 game at a library you already have elsewhere, or download charts from Chorus
 Encore without leaving the game.
 
+**add a folder** asks you to type a path, starting at your home folder. **TAB**
+completes a folder name as you go — press it again to step into the folder it
+just completed — then **ENTER** adds it. Whatever you add is remembered, so you
+only do it once per library.
+
 Your songs live outside the app, so replacing it with a newer build never
 touches your library:
 
@@ -152,5 +157,17 @@ The game's source is not public. This repo is the download page.
 
 Something broken? [Open an issue](../../issues/new/choose) — include the version
 from the options screen and, if it's a specific song, which one.
+
+If the game **crashed**, there's a log worth attaching. It records what went
+wrong even though the window vanished:
+
+| | Path |
+| --- | --- |
+| macOS | `~/Library/Application Support/keyboardwarrior/crash.log` |
+| Linux | `~/.config/keyboardwarrior/crash.log` |
+| Windows | `%APPDATA%\keyboardwarrior\crash.log` |
+
+The file only exists if the game has actually crashed, and it holds no personal
+information beyond the folder paths in the backtrace.
 
 What changed between versions is in [CHANGELOG.md](CHANGELOG.md).

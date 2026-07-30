@@ -59,9 +59,20 @@ body:
       placeholder: "Code Monkey (bundled)"
 
   - type: textarea
+    id: crashlog
+    attributes:
+      label: Crash log
+      description: >
+        If the game crashed, paste `crash.log` from your settings folder —
+        `~/Library/Application Support/keyboardwarrior/` on macOS,
+        `~/.config/keyboardwarrior/` on Linux, `%APPDATA%\keyboardwarrior\` on
+        Windows. It's the only record of a crash that closed the window.
+      render: shell
+
+  - type: textarea
     id: extra
     attributes:
       label: Anything else
       description: >
-        Screenshots, a crash message, or terminal output if you launched it from
-        a terminal. Drag images straight into this box.
+        Screenshots, or terminal output if you launched it from a terminal. Drag
+        images straight into this box.
