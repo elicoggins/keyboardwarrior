@@ -2,7 +2,8 @@
 
 A rhythm typing game built in Rust. 
 
-Copying off the homework of the wonderful projects [Clone Hero](https://clonehero.net) and [YARG](https://yarg.in/). Free, lightweight, and compatible with your existing chart library.
+Copying off the homework of the wonderful projects [Clone Hero](https://clonehero.net) and [YARG](https://yarg.in/). 
+Free, lightweight, and compatible with your existing chart library.
 
 **[▶ Check out the browser demo](https://elicoggins.github.io/keyboardwarrior/)**
 
