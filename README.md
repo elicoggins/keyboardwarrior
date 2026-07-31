@@ -133,12 +133,11 @@ What changed between versions is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Technology
 
-- **Rust** — no game engine, no runtime to install, one 12 MB binary
+- **Rust** —  distills to single 12 MB binary
 - **[macroquad](https://macroquad.rs)** — window, rendering and input
-- **[cpal](https://github.com/RustAudio/cpal)** — audio output, driving a custom mixer
+- **[cpal](https://github.com/RustAudio/cpal)** — drivies custom mixer
 - **[symphonia](https://github.com/pdeljanov/Symphonia)** and **libopus** — stem decoding (opus, ogg/vorbis, mp3, wav, flac)
-- **[midly](https://github.com/kovaxis/midly)** — `.mid` chart parsing, alongside in-house `.chart` and `.sng` readers
-- **WebAssembly** — the browser demo is the same codebase, with Web Audio in place of cpal
-- **GitHub Actions** — macOS, Windows and Linux builds
+- **[midly](https://github.com/kovaxis/midly)** — `.mid` chart parsing
+- **WebAssembly** — web audio swap for WASM demo
 
 Full dependency list and licenses: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
