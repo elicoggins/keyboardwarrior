@@ -9,13 +9,13 @@ Free, lightweight, and compatible with your existing chart library.
 
 ## Download
 
-Grab the latest build from the [Releases page](../../releases).
+Grab the latest release below or check out the [Releases page](../../releases).
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon **and** Intel) | `KeyboardWarrior-<version>-macOS-universal.zip` |
-| Windows (x86-64) | `KeyboardWarrior-<version>-windows-x86_64.zip` |
-| Linux (x86-64) | `KeyboardWarrior-<version>-linux-x86_64.tar.gz` |
+| macOS (Apple Silicon **and** Intel) | [`KeyboardWarrior-1.0.0-macOS-universal.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.0.0/KeyboardWarrior-1.0.0-macOS-universal.zip) |
+| Windows (x86-64) | [`KeyboardWarrior-1.0.0-windows-x86_64.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.0.0/KeyboardWarrior-1.0.0-windows-x86_64.zip) |
+| Linux (x86-64) | [`KeyboardWarrior-1.0.0-linux-x86_64.tar.gz`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.0.0/KeyboardWarrior-1.0.0-linux-x86_64.tar.gz) |
 
 ### macOS: first launch
 
