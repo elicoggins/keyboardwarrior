@@ -136,7 +136,7 @@ What changed between versions is in [CHANGELOG.md](CHANGELOG.md).
 - **[Rust](https://www.rust-lang.org)** —  distills to single 12 MB binary
 - **[macroquad](https://macroquad.rs)** — window, rendering and input
 - **[cpal](https://github.com/RustAudio/cpal)** — drivies custom mixer
-- **[symphonia](https://github.com/pdeljanov/Symphonia)** and **libopus** — stem decoding (opus, ogg/vorbis, mp3, wav, flac)
+- **[symphonia](https://github.com/pdeljanov/Symphonia)** and **[libopus](https://opus-codec.org)** — stem decoding (opus, ogg/vorbis, mp3, wav, flac)
 - **[midly](https://github.com/kovaxis/midly)** — `.mid` chart parsing
 - **[WebAssembly](https://webassembly.org)** — web audio swap for WASM demo
 
