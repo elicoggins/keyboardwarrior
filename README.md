@@ -31,7 +31,7 @@ macOS will be annoying and refuse to open the app.
 You only have to do this once - after that it launches normally.
 
 (On older macOS you could right-click → Open instead. Apple removed that
-shortcut in macOS 15 Sequoia)
+shortcut in macOS 15 Sequoia.)
 
 ### Windows: first launch
 
