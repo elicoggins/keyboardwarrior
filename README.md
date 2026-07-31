@@ -44,13 +44,14 @@ box. Click **More info**, then **Run anyway**. Once again, only the first time.
 ### Linux
 
 Unpack anywhere and run `./keyboardwarrior`. You'll need ALSA available
-(`libasound2` on Debian/Ubuntu).
+(`libasound2` on Debian/Ubuntu). Keep the `bundled_songs` folder next to the
+binary.
 
 (Thank you Linus)
 
-## Playing
+## Gameplay
 
-Keyboard Warrior puts a spin on Guitar Hero-like rhythm games by assigning a letter to each note forming words. Type the corresponding letter in rhythm to hit the note. **SPACE** unleashes your star power and **SHIFT** is your whammy bar.
+Keyboard Warrior puts a spin on Guitar Hero-like rhythm games by assigning a letter to each note, forming words. Type the corresponding letter in rhythm to hit the note. **SPACE** unleashes your star power and **SHIFT** is your whammy bar.
 
 - **ENTER** — start the selected song
 - **SHIFT + ENTER** — practice mode: pick a start and end section, loop it,
@@ -69,7 +70,7 @@ If you change your setup (switch to headphones, etc) **O** to recalibrate takes 
 
 ## Adding your own songs
 
-Keyboard Warrior reads the same charts as other rhythm games, which means there's tons of resources online. Drop either standard format into your songs folder:
+Keyboard Warrior reads the same charts as other popular music rhythm games, which means there's tons of resources online. Drop either standard format into your songs folder:
 
 - a **`.sng`** file
 - a **song folder** (`notes.mid` / `notes.chart`, `song.ini`, and audio stems
@@ -80,10 +81,10 @@ Keyboard Warrior also ships with a built-in bridge to [Chorus Encore](https://ww
 Your songs live outside the app, so replacing it with a newer build never
 touches your library:
 
-| | macOS | Linux |
-| --- | --- | --- |
-| Your songs | `~/Library/Application Support/keyboardwarrior/songs/` | `~/.local/share/keyboardwarrior/songs/` |
-| Settings and scores | `~/Library/Application Support/keyboardwarrior/` | `~/.config/keyboardwarrior/` |
+| | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Your songs | `~/Library/Application Support/keyboardwarrior/songs/` | `%APPDATA%\keyboardwarrior\songs\` | `~/.local/share/keyboardwarrior/songs/` |
+| Settings and scores | `~/Library/Application Support/keyboardwarrior/` | `%APPDATA%\keyboardwarrior\` | `~/.config/keyboardwarrior/` |
 
 Or point the app right at your existing library. Multiple directories supported at one time.
 
@@ -118,16 +119,12 @@ components the game is built on are listed in
 Something broken? [Open an issue](../../issues/new/choose) — include the version
 from the options screen and, if it's a specific song, which one.
 
-If the game **crashed**, there's a log worth attaching. It records what went
-wrong even though the window vanished:
+If the game **crashed**, there's a log worth attaching.
 
 | | Path |
 | --- | --- |
 | macOS | `~/Library/Application Support/keyboardwarrior/crash.log` |
-| Linux | `~/.config/keyboardwarrior/crash.log` |
 | Windows | `%APPDATA%\keyboardwarrior\crash.log` |
-
-The file only exists if the game has actually crashed, and it holds no personal
-information beyond the folder paths in the backtrace.
+| Linux | `~/.config/keyboardwarrior/crash.log` |
 
 What changed between versions is in [CHANGELOG.md](CHANGELOG.md).
