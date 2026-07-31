@@ -72,7 +72,7 @@ If you change your setup (switch to headphones, etc) **O** to recalibrate takes 
 
 Keyboard Warrior ships with a built-in bridge to [Chorus Encore](https://www.enchor.us/) - Search and download community charts from right inside the app.
 
-It reads the same charts as other popular music rhythm games, which means there's also tons of resources online for sourcing charts yourself. Drop either standard format into your songs folder:
+It reads the same standardized file formats as other popular music rhythm games, which means there's also tons of resources online for sourcing charts yourself. Drop either standard format into your songs folder:
 
 - a **`.sng`** file
 - a **song folder** (`notes.mid` / `notes.chart`, `song.ini`, and audio stems
@@ -135,7 +135,7 @@ What changed between versions is in [CHANGELOG.md](CHANGELOG.md).
 
 - **[Rust](https://www.rust-lang.org)** —  distills to single 12 MB binary
 - **[macroquad](https://macroquad.rs)** — window, rendering and input
-- **[cpal](https://github.com/RustAudio/cpal)** — drivies custom mixer
+- **[cpal](https://github.com/RustAudio/cpal)** — drives custom mixer
 - **[symphonia](https://github.com/pdeljanov/Symphonia)** and **[libopus](https://opus-codec.org)** — stem decoding (opus, ogg/vorbis, mp3, wav, flac)
 - **[midly](https://github.com/kovaxis/midly)** — `.mid` chart parsing
 - **[WebAssembly](https://webassembly.org)** — web audio swap for WASM demo
