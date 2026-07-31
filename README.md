@@ -68,9 +68,11 @@ fairly until it knows yours.
 
 If you change your setup (switch to headphones, etc) **O** to recalibrate takes seconds.
 
-## Adding your own songs
+## Adding songs
 
-Keyboard Warrior reads the same charts as other popular music rhythm games, which means there's tons of resources online. Drop either standard format into your songs folder:
+Keyboard Warrior ships with a built-in bridge to [Chorus Encore](https://www.enchor.us/) - Search and download community charts from right inside the app.
+
+It reads the same charts as other popular music rhythm games, which means there's also tons of resources online for sourcing charts yourself. Drop either standard format into your songs folder:
 
 - a **`.sng`** file
 - a **song folder** (`notes.mid` / `notes.chart`, `song.ini`, and audio stems
