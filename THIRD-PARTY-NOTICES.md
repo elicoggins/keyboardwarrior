@@ -6,7 +6,7 @@ distributed under. Copyright remains with the respective authors.
 
 ## Mozilla Public License 2.0
 
-Eleven of the crates below are licensed under the **MPL-2.0**, which requires
+Two of the crates below (and their sub-crates) are licensed under the **MPL-2.0**, which requires
 that recipients of a binary be able to obtain the source of those components.
 They are used **unmodified**, and their complete source is available at:
 
@@ -17,147 +17,144 @@ They are used **unmodified**, and their complete source is available at:
 
 A copy of the MPL-2.0 is available at https://mozilla.org/MPL/2.0/.
 
+## macroquad
+
+macroquad is distributed under MIT OR Apache-2.0. Source:
+https://github.com/not-fl3/macroquad
+
 ## libopus
 
 The `.opus` decoder links **libopus**, © the Xiph.Org Foundation and
 contributors, distributed under the 3-clause BSD license. Source:
 https://github.com/xiph/opus
 
-## macroquad
-
-**macroquad is shipped modified.** One function in `src/text/atlas.rs` is
-changed: when the glyph atlas overflows and re-packs every sprite into a larger
-texture, the sprites are sorted tallest-first rather than replayed in hash-map
-iteration order. That order is seeded per process, so upstream's re-pack was a
-per-launch lottery that could land the game anywhere from 334 MiB to several
-gigabytes of texture memory on the same binary. Nothing else in the crate is
-touched, and the change is offered upstream.
-
-macroquad is distributed under MIT OR Apache-2.0. Source:
-https://github.com/not-fl3/macroquad
-
 ## Full dependency list
 
-| Crate | Version | License |
-| --- | --- | --- |
-| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 |
-| allocator-api2 | 0.2.21 | MIT OR Apache-2.0 |
-| arrayvec | 0.7.8 | MIT OR Apache-2.0 |
-| audiopus_sys | 0.2.2 | ISC |
-| base64 | 0.22.1 | MIT OR Apache-2.0 |
-| bitflags | 1.3.2 | MIT/Apache-2.0 |
-| block | 0.1.6 | MIT |
-| bytemuck | 1.25.1 | Zlib OR Apache-2.0 OR MIT |
-| byteorder | 1.5.0 | Unlicense OR MIT |
-| cfg-if | 1.0.4 | MIT OR Apache-2.0 |
-| color_quant | 1.1.0 | MIT |
-| core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 |
-| coreaudio-rs | 0.11.3 | MIT/Apache-2.0 |
-| coreaudio-sys | 0.2.18 | MIT |
-| cpal | 0.15.3 | Apache-2.0 |
-| crc32fast | 1.5.0 | MIT OR Apache-2.0 |
-| crossbeam-deque | 0.8.7 | MIT OR Apache-2.0 |
-| crossbeam-epoch | 0.9.20 | MIT OR Apache-2.0 |
-| crossbeam-utils | 0.8.22 | MIT OR Apache-2.0 |
-| dasp_sample | 0.11.0 | MIT OR Apache-2.0 |
-| dirs | 5.0.1 | MIT OR Apache-2.0 |
-| dirs-sys | 0.4.1 | MIT OR Apache-2.0 |
-| dispatch | 0.2.0 | MIT |
-| displaydoc | 0.2.6 | MIT OR Apache-2.0 |
-| either | 1.16.0 | MIT OR Apache-2.0 |
-| encoding_rs | 0.8.35 | (Apache-2.0 OR MIT) AND BSD-3-Clause |
-| equivalent | 1.0.2 | Apache-2.0 OR MIT |
-| extended | 0.1.0 | MIT |
-| fdeflate | 0.3.7 | MIT OR Apache-2.0 |
-| flate2 | 1.1.9 | MIT OR Apache-2.0 |
-| foldhash | 0.1.5 | Zlib |
-| fontdue | 0.9.3 | MIT OR Apache-2.0 OR Zlib |
-| form_urlencoded | 1.2.2 | MIT OR Apache-2.0 |
-| getrandom | 0.2.17 | MIT OR Apache-2.0 |
-| glam | 0.27.0 | MIT OR Apache-2.0 |
-| hashbrown | 0.15.5 | MIT OR Apache-2.0 |
-| icu_collections | 2.2.0 | Unicode-3.0 |
-| icu_locale_core | 2.2.0 | Unicode-3.0 |
-| icu_normalizer | 2.2.0 | Unicode-3.0 |
-| icu_normalizer_data | 2.2.0 | Unicode-3.0 |
-| icu_properties | 2.2.0 | Unicode-3.0 |
-| icu_properties_data | 2.2.0 | Unicode-3.0 |
-| icu_provider | 2.2.0 | Unicode-3.0 |
-| idna | 1.1.0 | MIT OR Apache-2.0 |
-| idna_adapter | 1.2.2 | Apache-2.0 OR MIT |
-| image | 0.24.9 | MIT OR Apache-2.0 |
-| itoa | 1.0.18 | MIT OR Apache-2.0 |
-| lazy_static | 1.5.0 | MIT OR Apache-2.0 |
-| libc | 0.2.186 | MIT OR Apache-2.0 |
-| litemap | 0.8.2 | Unicode-3.0 |
-| log | 0.4.33 | MIT OR Apache-2.0 |
-| mach2 | 0.4.3 | BSD-2-Clause OR MIT OR Apache-2.0 |
-| macroquad | 0.4.15 (modified, see above) | MIT OR Apache-2.0 |
-| macroquad_macro | 0.1.8 | MIT/Apache-2.0 |
-| malloc_buf | 0.0.6 | MIT |
-| memchr | 2.8.3 | Unlicense OR MIT |
-| midly | 0.5.3 | Unlicense |
-| miniquad | 0.4.10 | MIT OR Apache-2.0 |
-| miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 |
-| num-traits | 0.2.19 | MIT OR Apache-2.0 |
-| objc | 0.2.7 | MIT |
-| objc-foundation | 0.1.1 | MIT |
-| objc-rs | 0.2.8 | MIT |
-| objc_id | 0.1.1 | MIT |
-| ogg | 0.9.2 | BSD-3-Clause |
-| once_cell | 1.21.4 | MIT OR Apache-2.0 |
-| option-ext | 0.2.0 | MPL-2.0 |
-| opus | 0.3.1 | MIT/Apache-2.0 |
-| percent-encoding | 2.3.2 | MIT OR Apache-2.0 |
-| png | 0.17.16 | MIT OR Apache-2.0 |
-| potential_utf | 0.1.5 | Unicode-3.0 |
-| proc-macro2 | 1.0.106 | MIT OR Apache-2.0 |
-| quad-rand | 0.2.3 | MIT |
-| quote | 1.0.46 | MIT OR Apache-2.0 |
-| raw-window-handle | 0.6.2 | MIT OR Apache-2.0 OR Zlib |
-| rayon | 1.12.0 | MIT OR Apache-2.0 |
-| rayon-core | 1.13.0 | MIT OR Apache-2.0 |
-| rfd | 0.14.1 | MIT |
-| ring | 0.17.14 | Apache-2.0 AND ISC |
-| rustls | 0.23.42 | Apache-2.0 OR ISC OR MIT |
-| rustls-pki-types | 1.15.0 | MIT OR Apache-2.0 |
-| rustls-webpki | 0.103.13 | ISC |
-| serde | 1.0.228 | MIT OR Apache-2.0 |
-| serde_core | 1.0.228 | MIT OR Apache-2.0 |
-| serde_derive | 1.0.228 | MIT OR Apache-2.0 |
-| serde_json | 1.0.150 | MIT OR Apache-2.0 |
-| simd-adler32 | 0.3.10 | MIT |
-| smallvec | 1.15.2 | MIT OR Apache-2.0 |
-| stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 |
-| subtle | 2.6.1 | BSD-3-Clause |
-| symphonia | 0.5.5 | MPL-2.0 |
-| symphonia-bundle-flac | 0.5.5 | MPL-2.0 |
-| symphonia-bundle-mp3 | 0.5.5 | MPL-2.0 |
-| symphonia-codec-pcm | 0.5.5 | MPL-2.0 |
-| symphonia-codec-vorbis | 0.5.5 | MPL-2.0 |
-| symphonia-core | 0.5.5 | MPL-2.0 |
-| symphonia-format-ogg | 0.5.5 | MPL-2.0 |
-| symphonia-format-riff | 0.5.5 | MPL-2.0 |
-| symphonia-metadata | 0.5.5 | MPL-2.0 |
-| symphonia-utils-xiph | 0.5.5 | MPL-2.0 |
-| syn | 2.0.119 | MIT OR Apache-2.0 |
-| synstructure | 0.13.2 | MIT |
-| tinystr | 0.8.3 | Unicode-3.0 |
-| ttf-parser | 0.21.1 | MIT OR Apache-2.0 |
-| unicode-ident | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 |
-| untrusted | 0.9.0 | ISC |
-| ureq | 2.12.1 | MIT OR Apache-2.0 |
-| url | 2.5.8 | MIT OR Apache-2.0 |
-| utf8_iter | 1.0.4 | Apache-2.0 OR MIT |
-| webpki-roots | 0.26.11 | CDLA-Permissive-2.0 |
-| webpki-roots | 1.0.9 | CDLA-Permissive-2.0 |
-| writeable | 0.6.3 | Unicode-3.0 |
-| yoke | 0.8.3 | Unicode-3.0 |
-| yoke-derive | 0.8.2 | Unicode-3.0 |
-| zerofrom | 0.1.8 | Unicode-3.0 |
-| zerofrom-derive | 0.1.7 | Unicode-3.0 |
-| zeroize | 1.9.0 | Apache-2.0 OR MIT |
-| zerotrie | 0.2.4 | Unicode-3.0 |
-| zerovec | 0.11.6 | Unicode-3.0 |
-| zerovec-derive | 0.11.3 | Unicode-3.0 |
-| zmij | 1.0.23 | MIT |
+| Crate | Version | License | Platforms |
+| --- | --- | --- | --- |
+| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | all |
+| allocator-api2 | 0.2.21 | MIT OR Apache-2.0 | all |
+| alsa | 0.9.1 | Apache-2.0/MIT | Linux |
+| alsa-sys | 0.3.1 | MIT | Linux |
+| arrayvec | 0.7.8 | MIT OR Apache-2.0 | all |
+| audiopus_sys | 0.2.2 | ISC | all |
+| base64 | 0.22.1 | MIT OR Apache-2.0 | all |
+| bitflags | 1.3.2 | MIT/Apache-2.0 | all |
+| bitflags | 2.13.1 | MIT OR Apache-2.0 | Linux |
+| bytemuck | 1.25.1 | Zlib OR Apache-2.0 OR MIT | all |
+| byteorder | 1.5.0 | Unlicense OR MIT | all |
+| cfg-if | 1.0.4 | MIT OR Apache-2.0 | all |
+| color_quant | 1.1.0 | MIT | all |
+| core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | macOS |
+| coreaudio-rs | 0.11.3 | MIT/Apache-2.0 | macOS |
+| coreaudio-sys | 0.2.18 | MIT | macOS |
+| cpal | 0.15.3 | Apache-2.0 | all |
+| crc32fast | 1.5.0 | MIT OR Apache-2.0 | all |
+| crossbeam-deque | 0.8.7 | MIT OR Apache-2.0 | all |
+| crossbeam-epoch | 0.9.20 | MIT OR Apache-2.0 | all |
+| crossbeam-utils | 0.8.22 | MIT OR Apache-2.0 | all |
+| dasp_sample | 0.11.0 | MIT OR Apache-2.0 | all |
+| dirs | 5.0.1 | MIT OR Apache-2.0 | all |
+| dirs-sys | 0.4.1 | MIT OR Apache-2.0 | all |
+| displaydoc | 0.2.6 | MIT OR Apache-2.0 | all |
+| either | 1.16.0 | MIT OR Apache-2.0 | all |
+| encoding_rs | 0.8.35 | (Apache-2.0 OR MIT) AND BSD-3-Clause | all |
+| equivalent | 1.0.2 | Apache-2.0 OR MIT | all |
+| extended | 0.1.0 | MIT | all |
+| fdeflate | 0.3.7 | MIT OR Apache-2.0 | all |
+| flate2 | 1.1.9 | MIT OR Apache-2.0 | all |
+| foldhash | 0.1.5 | Zlib | all |
+| fontdue | 0.9.3 | MIT OR Apache-2.0 OR Zlib | all |
+| form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | all |
+| getrandom | 0.2.17 | MIT OR Apache-2.0 | all |
+| glam | 0.27.0 | MIT OR Apache-2.0 | all |
+| hashbrown | 0.15.5 | MIT OR Apache-2.0 | all |
+| icu_collections | 2.2.0 | Unicode-3.0 | all |
+| icu_locale_core | 2.2.0 | Unicode-3.0 | all |
+| icu_normalizer | 2.2.0 | Unicode-3.0 | all |
+| icu_normalizer_data | 2.2.0 | Unicode-3.0 | all |
+| icu_properties | 2.2.0 | Unicode-3.0 | all |
+| icu_properties_data | 2.2.0 | Unicode-3.0 | all |
+| icu_provider | 2.2.0 | Unicode-3.0 | all |
+| idna | 1.1.0 | MIT OR Apache-2.0 | all |
+| idna_adapter | 1.2.2 | Apache-2.0 OR MIT | all |
+| image | 0.24.9 | MIT OR Apache-2.0 | all |
+| itoa | 1.0.18 | MIT OR Apache-2.0 | all |
+| lazy_static | 1.5.0 | MIT OR Apache-2.0 | all |
+| libc | 0.2.186 | MIT OR Apache-2.0 | macOS, Linux |
+| litemap | 0.8.2 | Unicode-3.0 | all |
+| log | 0.4.33 | MIT OR Apache-2.0 | all |
+| mach2 | 0.4.3 | BSD-2-Clause OR MIT OR Apache-2.0 | macOS |
+| macroquad | 0.4.16 | MIT OR Apache-2.0 | all |
+| macroquad_macro | 0.1.8 | MIT/Apache-2.0 | all |
+| malloc_buf | 0.0.6 | MIT | macOS |
+| memchr | 2.8.3 | Unlicense OR MIT | all |
+| midly | 0.5.3 | Unlicense | all |
+| miniquad | 0.4.11 | MIT OR Apache-2.0 | all |
+| miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | all |
+| num-traits | 0.2.19 | MIT OR Apache-2.0 | all |
+| objc-rs | 0.2.8 | MIT | macOS |
+| ogg | 0.9.2 | BSD-3-Clause | all |
+| once_cell | 1.21.4 | MIT OR Apache-2.0 | all |
+| option-ext | 0.2.0 | MPL-2.0 | all |
+| opus | 0.3.1 | MIT/Apache-2.0 | all |
+| percent-encoding | 2.3.2 | MIT OR Apache-2.0 | all |
+| png | 0.17.16 | MIT OR Apache-2.0 | all |
+| potential_utf | 0.1.5 | Unicode-3.0 | all |
+| proc-macro2 | 1.0.106 | MIT OR Apache-2.0 | all |
+| quad-rand | 0.2.3 | MIT | all |
+| quote | 1.0.46 | MIT OR Apache-2.0 | all |
+| rayon | 1.12.0 | MIT OR Apache-2.0 | all |
+| rayon-core | 1.13.0 | MIT OR Apache-2.0 | all |
+| ring | 0.17.14 | Apache-2.0 AND ISC | all |
+| rustls | 0.23.42 | Apache-2.0 OR ISC OR MIT | all |
+| rustls-pki-types | 1.15.0 | MIT OR Apache-2.0 | all |
+| rustls-webpki | 0.103.13 | ISC | all |
+| serde | 1.0.228 | MIT OR Apache-2.0 | all |
+| serde_core | 1.0.228 | MIT OR Apache-2.0 | all |
+| serde_derive | 1.0.228 | MIT OR Apache-2.0 | all |
+| serde_json | 1.0.150 | MIT OR Apache-2.0 | all |
+| simd-adler32 | 0.3.10 | MIT | all |
+| smallvec | 1.15.2 | MIT OR Apache-2.0 | all |
+| stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | all |
+| subtle | 2.6.1 | BSD-3-Clause | all |
+| symphonia | 0.5.5 | MPL-2.0 | all |
+| symphonia-bundle-flac | 0.5.5 | MPL-2.0 | all |
+| symphonia-bundle-mp3 | 0.5.5 | MPL-2.0 | all |
+| symphonia-codec-pcm | 0.5.5 | MPL-2.0 | all |
+| symphonia-codec-vorbis | 0.5.5 | MPL-2.0 | all |
+| symphonia-core | 0.5.5 | MPL-2.0 | all |
+| symphonia-format-ogg | 0.5.5 | MPL-2.0 | all |
+| symphonia-format-riff | 0.5.5 | MPL-2.0 | all |
+| symphonia-metadata | 0.5.5 | MPL-2.0 | all |
+| symphonia-utils-xiph | 0.5.5 | MPL-2.0 | all |
+| syn | 2.0.119 | MIT OR Apache-2.0 | all |
+| synstructure | 0.13.2 | MIT | all |
+| tinystr | 0.8.3 | Unicode-3.0 | all |
+| ttf-parser | 0.21.1 | MIT OR Apache-2.0 | all |
+| unicode-ident | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | all |
+| untrusted | 0.9.0 | ISC | all |
+| ureq | 2.12.1 | MIT OR Apache-2.0 | all |
+| url | 2.5.8 | MIT OR Apache-2.0 | all |
+| utf8_iter | 1.0.4 | Apache-2.0 OR MIT | all |
+| webpki-roots | 0.26.11 | CDLA-Permissive-2.0 | all |
+| webpki-roots | 1.0.9 | CDLA-Permissive-2.0 | all |
+| winapi | 0.3.9 | MIT/Apache-2.0 | Windows |
+| windows | 0.54.0 | MIT OR Apache-2.0 | Windows |
+| windows-core | 0.54.0 | MIT OR Apache-2.0 | Windows |
+| windows-result | 0.1.2 | MIT OR Apache-2.0 | Windows |
+| windows-sys | 0.48.0 | MIT OR Apache-2.0 | Windows |
+| windows-targets | 0.48.5 | MIT OR Apache-2.0 | Windows |
+| windows-targets | 0.52.6 | MIT OR Apache-2.0 | Windows |
+| windows_x86_64_msvc | 0.48.5 | MIT OR Apache-2.0 | Windows |
+| windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | Windows |
+| writeable | 0.6.3 | Unicode-3.0 | all |
+| yoke | 0.8.3 | Unicode-3.0 | all |
+| yoke-derive | 0.8.2 | Unicode-3.0 | all |
+| zerofrom | 0.1.8 | Unicode-3.0 | all |
+| zerofrom-derive | 0.1.7 | Unicode-3.0 | all |
+| zeroize | 1.9.0 | Apache-2.0 OR MIT | all |
+| zerotrie | 0.2.4 | Unicode-3.0 | all |
+| zerovec | 0.11.6 | Unicode-3.0 | all |
+| zerovec-derive | 0.11.3 | Unicode-3.0 | all |
+| zmij | 1.0.23 | MIT | all |
