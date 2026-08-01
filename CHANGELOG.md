@@ -5,6 +5,33 @@ Notable changes to Keyboard Warrior, newest first. Versions follow
 digit adds things, the major digit is reserved for a release that changes how
 saved settings, scores or song libraries work.
 
+## 1.0.2 — 2026-08-01
+
+A maintenance release. No gameplay, settings or song-library changes — an
+existing library and your saved settings carry over untouched.
+
+- **Latency calibration reads your setup more reliably.** The offset is now a
+  trimmed average rather than a bare median, so one missed beat no longer drags
+  the result, and tapping the same run twice lands in the same place. Taps that
+  arrive *before* the tick they'd be blamed on are ignored — a sound can't reach
+  you early, and treating anticipation as negative hardware latency was what
+  made a retry come back with a different answer. Key repeat and double presses
+  no longer count as extra taps either.
+- The calibration screen says what it measured (`measured delay 92 ms`) instead
+  of a bare signed offset, explains that a delay is normal and compensated for,
+  and asks for eight taps rather than four. Hand-nudging with the arrow keys is
+  unchanged, negative values included.
+- **Fixed: the F1 performance overlay covered the lanes.** On a song it reached
+  across two of the four — the readout you turn on to find out why a run feels
+  bad was hiding the notes. It's now stacked in the empty column beside the
+  highway, and reports memory use alongside the frame stats, with the session
+  peak next to each figure.
+- **Fixed: the browser demo could render unevenly on older Macs in Chrome**,
+  even with plenty of frame time to spare. The demo is also a smaller, cheaper
+  build than before.
+- Star power's reverb now runs only while there's something to hear, and rings
+  out as it always did. Less work in the mixer during ordinary play.
+
 ## 1.0.1 — 2026-07-31
 
 A maintenance release. No gameplay, settings or song-library changes — an
