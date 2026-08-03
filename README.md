@@ -7,6 +7,29 @@ Free, lightweight, and compatible with your existing chart library.
 
 **[▶ Check out the browser demo](https://elicoggins.github.io/keyboardwarrior/)**
 
+<video src="https://raw.githubusercontent.com/elicoggins/keyboardwarrior/main/media/keyboard-warrior-trailer.mp4" poster="https://raw.githubusercontent.com/elicoggins/keyboardwarrior/main/media/keyboard-warrior-trailer-poster.png" controls width="100%">
+  <a href="https://raw.githubusercontent.com/elicoggins/keyboardwarrior/main/media/keyboard-warrior-trailer.mp4">Watch the trailer</a>
+</video>
+
+## Gameplay
+
+Keyboard Warrior puts a spin on Guitar Hero-like rhythm games by assigning a letter to each note, forming words. Type the corresponding letter in rhythm to hit the note. **SPACE** unleashes your star power and **SHIFT** is your whammy bar.
+
+- **ENTER** — start the selected song
+- **SHIFT + ENTER** — practice mode: pick a start and end section, loop it,
+  and use **LEFT / RIGHT** to run it anywhere from 25% to 200% speed
+- **S** — cycle how the library is sorted (title, collection, artist, album,
+  decade, genre)
+- **Hold SPACE** — jump between category sections
+- **O** — options
+- **ESC** — pause
+
+Calibrate your latency the first time you play (**O** → calibration). Every
+display and audio setup has some delay, and the game can't judge your timing
+fairly until it knows yours.
+
+If you change your setup (switch to headphones, etc) **O** to recalibrate takes seconds.
+
 ## Download
 
 Grab the latest release below or check out the [Releases page](../../releases).
@@ -49,25 +72,6 @@ binary.
 
 (Thank you Linus)
 
-## Gameplay
-
-Keyboard Warrior puts a spin on Guitar Hero-like rhythm games by assigning a letter to each note, forming words. Type the corresponding letter in rhythm to hit the note. **SPACE** unleashes your star power and **SHIFT** is your whammy bar.
-
-- **ENTER** — start the selected song
-- **SHIFT + ENTER** — practice mode: pick a start and end section, loop it,
-  and use **LEFT / RIGHT** to run it anywhere from 25% to 200% speed
-- **S** — cycle how the library is sorted (title, collection, artist, album,
-  decade, genre)
-- **Hold SPACE** — jump between category sections
-- **O** — options
-- **ESC** — pause
-
-Calibrate your latency the first time you play (**O** → calibration). Every
-display and audio setup has some delay, and the game can't judge your timing
-fairly until it knows yours.
-
-If you change your setup (switch to headphones, etc) **O** to recalibrate takes seconds.
-
 ## Adding songs
 
 Keyboard Warrior ships with a built-in bridge to [Chorus Encore](https://www.enchor.us/) - Search and download community charts from right inside the app.
@@ -77,8 +81,6 @@ It reads the same standardized file formats as other popular music rhythm games,
 - a **`.sng`** file
 - a **song folder** (`notes.mid` / `notes.chart`, `song.ini`, and audio stems
   as `.opus` / `.ogg` / `.mp3` / `.wav`)
-
-Keyboard Warrior also ships with a built-in bridge to [Chorus Encore](https://www.enchor.us/) - Search and download community charts from right inside the app.
 
 Your songs live outside the app, so replacing it with a newer build never
 touches your library:

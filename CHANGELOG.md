@@ -5,10 +5,16 @@ Notable changes to Keyboard Warrior, newest first. Versions follow
 digit adds things, the major digit is reserved for a release that changes how
 saved settings, scores or song libraries work.
 
-## 1.0.2 — 2026-08-01
+## 1.0.3 — 2026-08-02
 
-A maintenance release. No gameplay, settings or song-library changes — an
-existing library and your saved settings carry over untouched.
+- **Fixed a graphical quirk with note fill size.**
+- **Persistent settings in browser demo.** Options are saved to the
+  browser's `localStorage`, so the demo comes back the way you left it instead
+  of starting from defaults on every reload.
+- Scaffolding for capturing and rendering gameplay trailers. Tooling for
+  building footage, not a change to the game itself.
+
+## 1.0.2 — 2026-08-01
 
 - **Latency calibration reads your setup more reliably.** The offset is now a
   trimmed average rather than a bare median, so one missed beat no longer drags
@@ -33,9 +39,6 @@ existing library and your saved settings carry over untouched.
   out as it always did. Less work in the mixer during ordinary play.
 
 ## 1.0.1 — 2026-07-31
-
-A maintenance release. No gameplay, settings or song-library changes — an
-existing library and your saved settings carry over untouched.
 
 - **Much lower memory use.** Text is now drawn from a small prerendered glyph
   atlas instead of one built at runtime, which takes the game from roughly
