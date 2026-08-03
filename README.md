@@ -9,6 +9,7 @@ Free, lightweight, and compatible with your existing chart library.
 
 ## Trailer
 https://github.com/user-attachments/assets/ca829453-a0e3-4a13-9b28-f45acc1aa744
+(audio on)
 
 ## Gameplay
 
