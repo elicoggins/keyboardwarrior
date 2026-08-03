@@ -7,10 +7,6 @@ Free, lightweight, and compatible with your existing chart library.
 
 **[▶ Check out the browser demo](https://elicoggins.github.io/keyboardwarrior/)**
 
-<video src="https://raw.githubusercontent.com/elicoggins/keyboardwarrior/main/media/keyboard-warrior-trailer.mp4" poster="https://raw.githubusercontent.com/elicoggins/keyboardwarrior/main/media/keyboard-warrior-trailer-poster.png" controls width="100%">
-  <a href="https://raw.githubusercontent.com/elicoggins/keyboardwarrior/main/media/keyboard-warrior-trailer.mp4">Watch the trailer</a>
-</video>
-
 ## Gameplay
 
 Keyboard Warrior puts a spin on Guitar Hero-like rhythm games by assigning a letter to each note, forming words. Type the corresponding letter in rhythm to hit the note. **SPACE** unleashes your star power and **SHIFT** is your whammy bar.
