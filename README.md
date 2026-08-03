@@ -10,6 +10,7 @@ Free, lightweight, and compatible with your existing chart library.
 ## Trailer (audio on)
 https://github.com/user-attachments/assets/ad2dcd71-fcf9-4518-be31-2fefaadcb1bb
 
+
 ## Gameplay
 
 Keyboard Warrior puts a spin on Guitar Hero-like rhythm games by assigning a letter to each note, forming words. Type the corresponding letter in rhythm to hit the note. **SPACE** unleashes your star power and **SHIFT** is your whammy bar.
