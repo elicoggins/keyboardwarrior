@@ -8,7 +8,9 @@ Free, lightweight, and compatible with your existing chart library.
 **[▶ Check out the browser demo](https://elicoggins.github.io/keyboardwarrior/)**
 
 ## Trailer (audio on)
-https://github.com/user-attachments/assets/157ec491-3d1e-4b2a-ba84-700aa6dbc2f5
+https://github.com/user-attachments/assets/c157dc59-9c1e-42e4-995e-db4e435c395c
+
+
 
 
 
