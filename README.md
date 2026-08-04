@@ -119,10 +119,9 @@ components the game is built on are listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). A copy of both ships inside
 the download.
 
-The game talks to the network exactly twice: it asks this repo's releases page
-whether there's a newer version when it starts, and it queries Chorus Encore
-when you search for a chart. Nothing else is sent anywhere, there's no
-analytics, and your songs, scores and settings stay on your machine.
+This game is capable of two outbound network requests: The first checks for new versions of
+the game, and the second is the optional Chorus Encore search and download. Nothing else is 
+sent or collected. Songs, scores, and settings are completely local and private.
 
 ## Bugs
 
