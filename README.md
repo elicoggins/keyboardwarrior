@@ -53,9 +53,6 @@ macOS will be annoying and refuse to open the app.
 
 You only have to do this once - after that it launches normally.
 
-(On older macOS you could right-click → Open instead. Apple removed that
-shortcut in macOS 15 Sequoia.)
-
 ### Windows: first launch
 
 Unzip the folder anywhere and run `keyboardwarrior.exe`. Keep the
@@ -69,8 +66,6 @@ box. Click **More info**, then **Run anyway**. Once again, only the first time.
 Unpack anywhere and run `./keyboardwarrior`. You'll need ALSA available
 (`libasound2` on Debian/Ubuntu). Keep the `bundled_songs` folder next to the
 binary.
-
-(Thank you Linus)
 
 ## Adding songs
 
