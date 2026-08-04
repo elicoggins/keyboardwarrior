@@ -5,6 +5,34 @@ Notable changes to Keyboard Warrior, newest first. Versions follow
 digit adds things, the major digit is reserved for a release that changes how
 saved settings, scores or song libraries work.
 
+## 1.0.4 — 2026-08-04
+
+- **Fixed: macOS asked for microphone permission on first launch.** The game
+  has never recorded anything — the audio library it uses was enumerating input
+  devices alongside output ones, and macOS asks about the microphone the moment
+  anything looks at one. Upgrading past that behaviour means the prompt is gone.
+- **The game now tells you when there's a newer version.** It asks the releases
+  page what the current version is once at launch and parks a small notice in
+  the corner of the menu if you're behind. Dismiss it and it stays gone for that
+  release. This and the Chorus Encore search are the only times the game talks
+  to the network.
+- **A run pauses when you switch away from the window.** Alt-tabbing mid-song
+  used to leave the notes falling without you.
+- **High scores are kept in the browser demo.** They used to be forgotten when
+  you closed the tab.
+- **Scores are tracked per charter.** Two charts of the same song by different
+  charters no longer share one personal best. Bests you've already set carry
+  over to every matching chart, so nothing is lost.
+- **The mouse cursor gets out of the way** after a couple of seconds idle in the
+  menus, and after one during a song.
+- Song libraries scan faster, which is most noticeable if yours is large.
+- The F1 performance overlay reports more: p95 and p99 frame times, input
+  latency, game CPU time, and where the frame actually went.
+- The Chorus Encore search identifies itself as what it is rather than
+  imitating a browser, and backs off when the server asks it to.
+- **The terms of use now ship inside the download** rather than only living on
+  this page.
+
 ## 1.0.3 — 2026-08-02
 
 - **Fixed a graphical quirk with note fill size.**

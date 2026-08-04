@@ -36,9 +36,9 @@ Grab the latest release below or check out the [Releases page](../../releases).
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon **and** Intel) | [`KeyboardWarrior-1.0.3-macOS-universal.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.0.3/KeyboardWarrior-1.0.3-macOS-universal.zip) |
-| Windows (x86-64) | [`KeyboardWarrior-1.0.3-windows-x86_64.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.0.3/KeyboardWarrior-1.0.3-windows-x86_64.zip) |
-| Linux (x86-64) | [`KeyboardWarrior-1.0.3-linux-x86_64.tar.gz`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.0.3/KeyboardWarrior-1.0.3-linux-x86_64.tar.gz) |
+| macOS (Apple Silicon **and** Intel) | [`KeyboardWarrior-1.0.4-macOS-universal.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.0.4/KeyboardWarrior-1.0.4-macOS-universal.zip) |
+| Windows (x86-64) | [`KeyboardWarrior-1.0.4-windows-x86_64.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.0.4/KeyboardWarrior-1.0.4-windows-x86_64.zip) |
+| Linux (x86-64) | [`KeyboardWarrior-1.0.4-linux-x86_64.tar.gz`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.0.4/KeyboardWarrior-1.0.4-linux-x86_64.tar.gz) |
 
 ### macOS: first launch
 
@@ -116,7 +116,13 @@ Free to download, play and share.
 
 The full terms are in [LICENSE.md](LICENSE.md), and the third-party open-source
 components the game is built on are listed in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md). A copy of both ships inside
+the download.
+
+The game talks to the network exactly twice: it asks this repo's releases page
+whether there's a newer version when it starts, and it queries Chorus Encore
+when you search for a chart. Nothing else is sent anywhere, there's no
+analytics, and your songs, scores and settings stay on your machine.
 
 ## Bugs
 
