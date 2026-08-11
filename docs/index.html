@@ -386,6 +386,24 @@
         gap: 0.75rem;
       }
 
+      /* `Share` says what the button does; this says what it is for, which is
+         the part a phone visitor would otherwise have to work out — a share
+         button reads as "send this to a friend", and the useful thing here is
+         sending it to yourself. Set below the button rather than above it so
+         the card still runs fact, action, reassurance.
+
+         The touch case only. The same card is what a failed build draws, and
+         telling someone whose demo broke on the machine they are already
+         sitting at to mail themselves a link is nonsense — hence the mode
+         gate rather than a media query, which would also catch that. */
+      .fallback p.fallback__hint {
+        display: none;
+        margin: -0.45rem 0 0;
+        font-size: 0.875rem;
+        color: var(--dim);
+      }
+      .stage[data-mode="unsupported"] .fallback__hint { display: block; }
+
       .stage[data-mode="unsupported"] #glcanvas,
       .stage[data-mode="unsupported"] .drop,
       .stage[data-mode="unsupported"] .rail,
@@ -596,16 +614,12 @@
             <source media="(max-width: 44rem)" srcset="gameplay-tall.jpg" width="812" height="849" />
             <img src="gameplay.jpg" width="1920" height="1080" alt="Keyboard Warrior gameplay: lettered notes falling toward a strike line, with the lyric being typed underneath" />
           </picture>
-          <!-- The second sentence belongs to the touch case and is written
-               here rather than added in script, because the error path replaces
-               this paragraph wholesale (see `fail`) — a build that failed to
-               start has nothing to come back to later on a computer. -->
           <p id="fallback-copy">
             keyboard warrior needs a physical keyboard, so it's playable on
-            desktop only. Share the link to open it later on a computer.
+            desktop only.
           </p>
           <div class="fallback__actions">
-            <button class="cap" type="button" data-share hidden>Share the link</button>
+            <button class="cap" type="button" data-share hidden>Share</button>
             <a
               class="cap cap--gold"
               href="https://github.com/elicoggins/keyboardwarrior"
@@ -614,6 +628,9 @@
               >GitHub</a
             >
           </div>
+          <p class="fallback__hint">
+            Share the link with yourself for later!
+          </p>
         </div>
       </div>
 
@@ -638,7 +655,7 @@
           rel="noopener noreferrer"
           >GitHub</a
         >
-        <button class="cap" type="button" data-share hidden>Share the link</button>
+        <button class="cap" type="button" data-share hidden>Share</button>
       </p>
 
       <section class="block">
@@ -737,8 +754,10 @@
             let restore;
 
             // Confirming inside the button keeps the answer where the press
-            // was. Pinning the width first stops the shorter word from
-            // re-centring the row and shifting the cap beside it.
+            // was. Pinning the width first stops a shorter word from
+            // re-centring the row and shifting the cap beside it; "Copied" is
+            // one letter off "Share" for the same reason in the other
+            // direction, since min-width cannot stop the cap from growing.
             const say = (text) => {
               btn.style.minWidth = `${btn.offsetWidth}px`;
               btn.textContent = text;
@@ -765,7 +784,7 @@
               if (!copyable()) return;
               try {
                 await navigator.clipboard.writeText(shareData.url);
-                say('Link copied');
+                say('Copied');
               } catch {
                 /* Denied clipboard permission; saying nothing beats lying. */
               }
