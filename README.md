@@ -8,7 +8,7 @@ to download community charts.
 
 Available on macOS, Windows and Linux, as well as a playable demo:
 
-**[▶ Check out the browser demo](https://elicoggins.github.io/keyboardwarrior/)**
+**[▶ Play the browser demo at keyboardwarrior.app](https://keyboardwarrior.app)**
 
 ## Trailer (audio on)
 https://github.com/user-attachments/assets/ad2dcd71-fcf9-4518-be31-2fefaadcb1bb
