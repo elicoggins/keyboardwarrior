@@ -5,6 +5,41 @@ Notable changes to Keyboard Warrior, newest first. Versions follow
 digit adds things, the major digit is reserved for a release that changes how
 saved settings, scores or song libraries work.
 
+## 1.1.0 — 2026-08-11
+
+- **Song folders can be switched off without being thrown out.** A folder in the
+  song-folders screen now takes SPACE to stop scanning it and DEL to drop it
+  from the list entirely. Neither touches a single file on disk; the difference
+  is that a switched-off folder keeps its row, so it's the one you can switch
+  back on. Useful if you keep a big pack around but don't want it crowding the
+  wheel every session.
+- **Fixed: in the browser, notes could die as a MISS you had no way to prevent.**
+  A keystroke tells the game two things — which character you typed, and that
+  you pressed the key rather than held it — and browsers deliver those as two
+  separate events that don't have to arrive in the same frame. When they split,
+  the character looked like key-repeat and was thrown away: the note was never
+  judged and simply missed. The two halves are now paired across frames.
+- **Fixed: deleting a song jumped the cursor somewhere unrelated.** The wheel
+  went back to the slot number the deleted song had held, which after the
+  rescan belongs to a different song. It now lands on the song that was sitting
+  next to the one you deleted.
+- **Fixed: the whammy ripple looked frozen at higher scroll speeds.** The wave
+  travelled at a fixed rate while the highway scrolled at whatever the speed
+  setting chose, so at TURBO the two nearly matched and the ripple appeared to
+  sit still on the tail. It's now pinned to the highway's scroll at every speed.
+- **Losing an audio device mid-song no longer ends the run.** Unplugging
+  headphones pauses cleanly and offers a retry instead of leaving the song
+  playing into nothing.
+- **Settings and scores survive a corrupted file.** They're written so an
+  interrupted save can't leave a half-file behind, and a damaged one falls back
+  to the last good copy rather than starting you over. A file too broken to
+  read is kept aside rather than silently replaced.
+- Rescans — at startup, after a delete, and after a download — happen in the
+  background and keep the previous library on screen until the new one is
+  ready, instead of emptying the wheel while they run.
+- Damaged or hostile `.sng` files are rejected on inspection rather than part
+  way through loading.
+
 ## 1.0.4 — 2026-08-04
 
 - **Fixed: macOS asked for microphone permission on first launch.** The game
