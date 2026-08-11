@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One page, hand-maintained. Update <lastmod> only when what the page says
+  actually changes — this site redeploys every time the wasm is rebuilt, and a
+  date that moves on every deploy is one Google learns to stop believing.
+
+  No <priority>: it is only meaningful as a ranking of one URL against another
+  on the same site, and there is one URL. Google has ignored the field for
+  years in any case.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://keyboardwarrior.app/</loc>
+    <lastmod>2026-08-11</lastmod>
+  </url>
+</urlset>

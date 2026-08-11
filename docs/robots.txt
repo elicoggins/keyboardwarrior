@@ -1,0 +1,13 @@
+# The Sitemap line is the point: it is how a crawler finds sitemap.xml without
+# being told about it in a per-engine console. Nothing here is disallowed — a
+# Disallow advertises the path it names, and this site has one page and nothing
+# to keep out of an index.
+#
+# The User-agent/Allow pair below is a formality. Everything is permitted by
+# default, and modern parsers accept a bare Sitemap directive; some older ones
+# want a group ahead of it.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://keyboardwarrior.app/sitemap.xml
