@@ -1,7 +1,11 @@
-# This repo holds no source and no build output — only the README, the notices,
-# and whatever is attached to a GitHub Release. Staged release artifacts are
-# built from the private source repo and uploaded, never committed: they're
-# tens of megabytes each and Releases already stores them.
+# This repo holds no source — only the README, the notices, whatever is
+# attached to a GitHub Release, and docs/, which is the browser demo GitHub
+# Pages serves. docs/ is the one exception to "no build output", and it is
+# committed on purpose: Pages can only publish what is in the repository, and
+# the demo is built from the private source repo where Pages cannot reach it.
+# Staged release artifacts are a different matter — built there and uploaded,
+# never committed: they're tens of megabytes each and Releases already stores
+# them.
 *.zip
 *.tar.gz
 *.dmg
