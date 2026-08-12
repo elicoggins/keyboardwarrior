@@ -882,7 +882,24 @@
               screen.dataset.drop = '';
             }, linger);
           };
-          screen.addEventListener('pointermove', () => showDrop());
+          // A pointermove is not proof that the pointer moved. WebKit re-runs
+          // what is under the cursor whenever something might have changed it
+          // and reports the answer as a move at the position the pointer was
+          // already at; pressing SHIFT is enough to provoke one. The game hands
+          // SHIFT to the whammy bar and to every capital letter, so a bar that
+          // trusted the event dropped over the highway mid-song, again and
+          // again, without the mouse having been touched. What the control is
+          // actually waiting for is new coordinates. The first event has none to
+          // compare against and counts as movement — the pointer had to arrive
+          // somehow — which costs at most one appearance on the way in.
+          let atX = null;
+          let atY = null;
+          screen.addEventListener('pointermove', (e) => {
+            const moved = atX === null || e.clientX !== atX || e.clientY !== atY;
+            atX = e.clientX;
+            atY = e.clientY;
+            if (moved) showDrop();
+          });
           screen.addEventListener('pointerleave', () => {
             clearTimeout(idle);
             screen.dataset.drop = '';
