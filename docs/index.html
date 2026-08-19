@@ -19,9 +19,6 @@
     />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://keyboardwarrior.app/" />
-    <!-- The site is the game's now, not a section of a portfolio: this is what
-         an unfurled link prints above the title, and "Elijah Coggins" was only
-         ever accurate while the page lived on that site. -->
     <meta property="og:site_name" content="Keyboard Warrior" />
     <meta property="og:locale" content="en_US" />
     <meta
@@ -45,14 +42,7 @@
       content="https://keyboardwarrior.app/og-keyboardwarrior.png"
     />
 
-    <!-- Every asset below is named relative to this document, and must stay
-         that way. GitHub Pages serves this same directory at two depths: the
-         root of keyboardwarrior.app, and /keyboardwarrior/ on
-         elicoggins.github.io, which still answers and redirects here. A
-         leading slash is correct at exactly one of them, and the failure is
-         silent on the other — a black canvas and a page in the wrong typeface.
-         The absolute URLs above are the ones crawlers and link unfurlers
-         cannot resolve relatively: canonical, og:, and the JSON-LD block. -->
+    <!-- Keep asset paths relative for both GitHub Pages URLs. -->
     <link rel="icon" type="image/png" sizes="256x256" href="icon.png" />
     <link rel="apple-touch-icon" href="icon.png" />
     <link
@@ -62,7 +52,7 @@
       href="proggyclean.woff2"
       crossorigin
     />
-    <title>Keyboard Warrior — a rhythm typing game</title>
+    <title>Keyboard Warrior · a rhythm typing game</title>
 
     <script type="application/ld+json">
       {
@@ -93,7 +83,6 @@
         "codeRepository": "https://github.com/elicoggins/keyboardwarrior"
       }
     </script>
-    <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-KY646TMGR5"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
@@ -103,11 +92,6 @@
       gtag('config', 'G-KY646TMGR5');
     </script>
     <style>
-      /* The page is set in the game's own typeface. assets/ProggyClean.ttf is
-         what examples/make_font.rs bakes assets/font.png from, so every word
-         here is drawn with the letterforms the game draws with — the page and
-         the canvas stop being two different documents. Tristan Grimmer's
-         ProggyClean, MIT, the same file macroquad ships. */
       @font-face {
         font-family: 'ProggyClean';
         font-style: normal;
@@ -116,8 +100,6 @@
         src: url('proggyclean.woff2') format('woff2');
       }
 
-      /* src/theme.rs, "EMBER": the near-black base, the two ember lanes and the
-         two slate ones, plus the cyan the app icon and the menu subtitle use. */
       :root {
         color-scheme: dark;
         --bg: #0b0b0d;
@@ -161,8 +143,6 @@
         white-space: nowrap;
       }
 
-      /* The highway's own backdrop: a 46px rule grid and a thin scatter of
-         stars, faded out from the middle the way the game fades its own. */
       .field {
         position: fixed;
         inset: 0;
@@ -199,8 +179,6 @@
           radial-gradient(1px 1px at 24% 93%, rgba(217, 224, 235, 0.25), transparent);
       }
 
-      /* --------------------------------------------------------- the stage */
-
       .stage {
         position: relative;
         display: flex;
@@ -209,18 +187,6 @@
         min-height: 28rem;
       }
 
-      /* Nothing sits above the picture. The game draws its own title, and the
-         demo carries its own download row — a bar up here could only repeat
-         one of them. Most people arrive on this page directly rather than
-         through the index, so it is not a stop on a journey either. */
-
-      /* The game draws a key as a hard-edged square: a low-alpha fill of the
-         lane colour, a border at three times that alpha, and the letter inside
-         (tutorial.rs, draw_keyboard_legend). These are that object stretched to
-         hold a word, plus the offset shadow an old panel would have had — so
-         pressing one travels the length of its own shadow, which is the right
-         gesture for a game about pressing keys. No radius anywhere: the game
-         draws rectangles, not rounded rectangles. */
       .cap {
         appearance: none;
         display: inline-block;
@@ -263,23 +229,13 @@
       }
       .cap--gold:active { box-shadow: 0 0 0 rgba(253, 184, 64, 0); }
 
-      /* `hidden` is a UA-stylesheet rule, and any author `display` outranks it
-         no matter how weak the selector — .cap's inline-block alone would leave
-         the share button on screen in a browser that can neither share nor
-         copy, as a cap that does nothing when pressed. Restating it here is
-         what actually hides it. */
+      /* Author styles override the browser's hidden rule. */
       .cap[hidden] { display: none; }
 
-      /* A thumb needs more than a line of text to aim at. */
       @media (pointer: coarse) {
         .cap { padding: 0.85rem 1.5rem; }
       }
 
-      /* Height is what the game is short of — gfx::ui() scales the whole layout
-         by min(w/1100, h/800), so on a laptop the viewport's height decides how
-         big the notes are. The width cap only keeps an ultrawide from stranding
-         the highway in a very long strip; the bands beside it are the game's own
-         background colour, so the cap cannot be seen. */
       .screen {
         position: relative;
         flex: 1 1 auto;
@@ -299,12 +255,6 @@
         touch-action: none;
       }
 
-      /* ESC is the game's pause key (playing.rs), so fullscreen cannot put its
-         way in or out on the keyboard without fighting gameplay. The control
-         drops down over the top of the picture when the pointer moves and
-         retracts when it settles, and it is the only thing that offers
-         fullscreen — so entering and leaving are the same gesture in the same
-         place. */
       .drop {
         position: absolute;
         top: 0;
@@ -321,8 +271,6 @@
       }
       .screen[data-drop="1"] .drop { transform: none; }
 
-      /* -------------------------------------------------- unsupported / error */
-
       .fallback {
         position: absolute;
         inset: 0;
@@ -337,10 +285,6 @@
         background: var(--bg);
       }
 
-      /* On a phone the wide frame renders at about 18% and the gems come out
-         ten pixels across — a dark rectangle rather than a rhythm game. The
-         narrow source is the same frame cropped to the highway, so the letters,
-         the strike line and the word being typed all survive the width. */
       .fallback picture { width: min(36rem, 100%); }
 
       .fallback img {
@@ -357,12 +301,6 @@
         color: var(--dim);
       }
 
-      /* Traced from ProggyClean at the 8-pixel cap height the game's own atlas
-         is baked at, and drawn as geometry rather than set as type. The webfont
-         is the same face and is correct everywhere else on the page, but its
-         outlines antialias — at this size, beside a screenshot of the game
-         drawing the identical words as hard pixel blocks, smooth edges read as
-         the wrong font. crispEdges keeps the grid square at any width. */
       .fallback__mark {
         display: block;
         width: min(21rem, 88%);
@@ -376,9 +314,6 @@
         color: var(--cyan);
       }
 
-      /* The card is a column, so two caps left to themselves would stack and
-         push the screenshot off a short phone. A row keeps the foot of the card
-         one line tall, and wraps rather than overflowing when it can't. */
       .fallback__actions {
         display: flex;
         flex-wrap: wrap;
@@ -386,16 +321,6 @@
         gap: 0.75rem;
       }
 
-      /* `Share` says what the button does; this says what it is for, which is
-         the part a phone visitor would otherwise have to work out — a share
-         button reads as "send this to a friend", and the useful thing here is
-         sending it to yourself. Set below the button rather than above it so
-         the card still runs fact, action, reassurance.
-
-         The touch case only. The same card is what a failed build draws, and
-         telling someone whose demo broke on the machine they are already
-         sitting at to mail themselves a link is nonsense — hence the mode
-         gate rather than a media query, which would also catch that. */
       .fallback p.fallback__hint {
         display: none;
         margin: -0.45rem 0 0;
@@ -417,18 +342,11 @@
       .stage[data-mode="unsupported"] .screen { overflow: visible; }
       .stage[data-mode="unsupported"] .fallback { position: static; width: 100%; }
 
-      /* Two ways to fill the screen, because only one of them can be trusted
-         with the ESC key. Which one is chosen is decided in script; both are
-         announced here as data-fs so the rest of the page needs no branch. */
       .stage[data-fs] .rail { display: none; }
       .stage[data-fs] #glcanvas { max-width: none; }
 
       .stage:fullscreen { height: 100%; background: var(--bg); }
 
-      /* The page's own fullscreen, for browsers that would spend ESC leaving
-         the real one. It gives up the browser's chrome — a strip of height the
-         native path reclaims — and in exchange nothing but this page decides
-         what ESC means. */
       .stage[data-fs="page"] {
         position: fixed;
         inset: 0;
@@ -439,18 +357,9 @@
 
       html.kw-filled, html.kw-filled body { overflow: hidden; }
 
-      /* Safari below 16.4 only has the prefixed form, and one unknown pseudo
-         would throw away the whole selector list — so it gets its own rule.
-         Everything else it needs comes from the data-fs rules above. */
+      /* Keep this separate so unsupported selectors do not invalidate other rules. */
       .stage:-webkit-full-screen { height: 100%; background: var(--bg); }
 
-      /* The menu rules its song list off with a hairline broken by centred type
-         (see the alphabet markers in scene/menu.rs). The same rule closes the
-         picture, names the thing, and carries the way down — the wordmark is
-         welcome here because it is the one place on the page the game's own
-         title is not already on screen. Wheel events over the canvas are
-         swallowed by miniquad, so this strip is also the one place above the
-         fold that a trackpad can scroll from. */
       .rail {
         display: flex;
         align-items: center;
@@ -477,12 +386,6 @@
       }
       .rail:hover, .rail:focus-visible { color: var(--ink); }
 
-      /* A pair of them, one either side, so the rule stays symmetrical about
-         its own centre — and drawn in CSS rather than set as a character,
-         because the game's font atlas is printable ASCII and has no glyph
-         pointing anywhere but right. They carry the only remaining hint that
-         the page keeps going, so they breathe: 2px, slowly, which is legible
-         out of the corner of an eye and invisible when looked at directly. */
       .rail__arrow {
         width: 0;
         height: 0;
@@ -502,17 +405,6 @@
         80% { transform: translateY(2px); }
       }
 
-      /* ---------------------------------------------------------- the notes */
-
-      /* The column is sized off the measure, not the window: ProggyClean runs
-         about 0.44em to the character, so 36rem is roughly 78 of them — long
-         enough for the GL_RENDERER note, short enough to read down. Headings
-         stay centred over it, the way the menu centres its own labels. */
-      /* ProggyClean advances 0.4375em, so at 18px the column below runs to
-         about eighty characters — the measure a monospace face has been read
-         at for as long as there have been terminals. The side padding is its
-         own, narrower than --gutter, because the gutter is sized for the game
-         above and would spend that measure on empty margin. */
       .sheet {
         width: min(42rem, 100%);
         margin: 0 auto;
@@ -536,8 +428,6 @@
         gap: 0.75rem;
       }
 
-      /* On a touch device the card above already carries this exact button a
-         screen higher up; one of them is enough. */
       .stage[data-mode="unsupported"] ~ .sheet .sheet__cta { display: none; }
 
       .block { margin: 0 0 clamp(1.8rem, 4vh, 2.6rem); }
@@ -601,10 +491,6 @@
           <button class="cap" type="button" id="fs">Fullscreen</button>
         </div>
 
-        <!-- Shown when the game cannot run: a touch device, or a build that
-             failed to start. Both cases lose the thing that draws the title,
-             so the card draws it instead — same words, same colours, same
-             order as the menu's own opening. -->
         <div class="fallback" id="fallback">
           <svg class="fallback__mark" viewBox="0 0 111 8" shape-rendering="crispEdges" aria-hidden="true">
             <path d="M0 0h1v1h-1zM5 0h1v1h-1zM7 0h5v1h-5zM13 0h1v1h-1zM19 0h1v1h-1zM21 0h4v1h-4zM30 0h2v1h-2zM37 0h2v1h-2zM42 0h4v1h-4zM49 0h4v1h-4zM62 0h1v1h-1zM68 0h1v1h-1zM72 0h2v1h-2zM77 0h4v1h-4zM84 0h4v1h-4zM92 0h3v1h-3zM100 0h2v1h-2zM105 0h4v1h-4zM0 1h1v1h-1zM4 1h1v1h-1zM7 1h1v1h-1zM13 1h1v1h-1zM19 1h1v1h-1zM21 1h1v1h-1zM25 1h1v1h-1zM29 1h1v1h-1zM32 1h1v1h-1zM37 1h2v1h-2zM42 1h1v1h-1zM46 1h1v1h-1zM49 1h1v1h-1zM53 1h1v1h-1zM62 1h1v1h-1zM65 1h1v1h-1zM68 1h1v1h-1zM72 1h2v1h-2zM77 1h1v1h-1zM81 1h1v1h-1zM84 1h1v1h-1zM88 1h1v1h-1zM93 1h1v1h-1zM99 1h1v1h-1zM102 1h1v1h-1zM105 1h1v1h-1zM109 1h1v1h-1zM0 2h1v1h-1zM3 2h1v1h-1zM7 2h1v1h-1zM14 2h1v1h-1zM18 2h1v1h-1zM21 2h1v1h-1zM25 2h1v1h-1zM28 2h1v1h-1zM33 2h1v1h-1zM36 2h1v1h-1zM39 2h1v1h-1zM42 2h1v1h-1zM46 2h1v1h-1zM49 2h1v1h-1zM54 2h1v1h-1zM62 2h1v1h-1zM65 2h1v1h-1zM68 2h1v1h-1zM71 2h1v1h-1zM74 2h1v1h-1zM77 2h1v1h-1zM81 2h1v1h-1zM84 2h1v1h-1zM88 2h1v1h-1zM93 2h1v1h-1zM98 2h1v1h-1zM103 2h1v1h-1zM105 2h1v1h-1zM109 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM7 3h4v1h-4zM15 3h1v1h-1zM17 3h1v1h-1zM21 3h5v1h-5zM28 3h1v1h-1zM33 3h1v1h-1zM36 3h1v1h-1zM39 3h1v1h-1zM42 3h1v1h-1zM46 3h1v1h-1zM49 3h1v1h-1zM54 3h1v1h-1zM62 3h1v1h-1zM64 3h1v1h-1zM66 3h1v1h-1zM68 3h1v1h-1zM71 3h1v1h-1zM74 3h1v1h-1zM77 3h1v1h-1zM81 3h1v1h-1zM84 3h1v1h-1zM88 3h1v1h-1zM93 3h1v1h-1zM98 3h1v1h-1zM103 3h1v1h-1zM105 3h1v1h-1zM109 3h1v1h-1zM0 4h3v1h-3zM7 4h1v1h-1zM16 4h1v1h-1zM21 4h1v1h-1zM26 4h1v1h-1zM28 4h1v1h-1zM33 4h1v1h-1zM36 4h4v1h-4zM42 4h4v1h-4zM49 4h1v1h-1zM54 4h1v1h-1zM62 4h1v1h-1zM64 4h1v1h-1zM66 4h1v1h-1zM68 4h1v1h-1zM71 4h4v1h-4zM77 4h4v1h-4zM84 4h4v1h-4zM93 4h1v1h-1zM98 4h1v1h-1zM103 4h1v1h-1zM105 4h4v1h-4zM0 5h1v1h-1zM3 5h1v1h-1zM7 5h1v1h-1zM16 5h1v1h-1zM21 5h1v1h-1zM26 5h1v1h-1zM28 5h1v1h-1zM33 5h1v1h-1zM35 5h1v1h-1zM40 5h1v1h-1zM42 5h1v1h-1zM45 5h1v1h-1zM49 5h1v1h-1zM54 5h1v1h-1zM63 5h2v1h-2zM66 5h2v1h-2zM70 5h1v1h-1zM75 5h1v1h-1zM77 5h1v1h-1zM80 5h1v1h-1zM84 5h1v1h-1zM87 5h1v1h-1zM93 5h1v1h-1zM98 5h1v1h-1zM103 5h1v1h-1zM105 5h1v1h-1zM108 5h1v1h-1zM0 6h1v1h-1zM4 6h1v1h-1zM7 6h1v1h-1zM16 6h1v1h-1zM21 6h1v1h-1zM26 6h1v1h-1zM29 6h1v1h-1zM32 6h1v1h-1zM35 6h1v1h-1zM40 6h1v1h-1zM42 6h1v1h-1zM46 6h1v1h-1zM49 6h1v1h-1zM53 6h1v1h-1zM63 6h1v1h-1zM67 6h1v1h-1zM70 6h1v1h-1zM75 6h1v1h-1zM77 6h1v1h-1zM81 6h1v1h-1zM84 6h1v1h-1zM88 6h1v1h-1zM93 6h1v1h-1zM99 6h1v1h-1zM102 6h1v1h-1zM105 6h1v1h-1zM109 6h1v1h-1zM0 7h1v1h-1zM5 7h1v1h-1zM7 7h5v1h-5zM16 7h1v1h-1zM21 7h5v1h-5zM30 7h2v1h-2zM35 7h1v1h-1zM40 7h1v1h-1zM42 7h1v1h-1zM47 7h1v1h-1zM49 7h4v1h-4zM63 7h1v1h-1zM67 7h1v1h-1zM70 7h1v1h-1zM75 7h1v1h-1zM77 7h1v1h-1zM82 7h1v1h-1zM84 7h1v1h-1zM89 7h1v1h-1zM92 7h3v1h-3zM100 7h2v1h-2zM105 7h1v1h-1zM110 7h1v1h-1z" />
@@ -702,7 +588,7 @@
     </main>
 
     <script src="mq_js_bundle.js"></script>
-    <!-- WebAudio plugin: registers the kw_audio_start wasm import; must run before load() -->
+    <!-- Register the audio import before load(). -->
     <script src="kw_audio.js"></script>
     <script>
       (() => {
@@ -716,23 +602,6 @@
           document.querySelector('.sheet').scrollIntoView({ behavior: 'smooth' });
         });
 
-        // ------------------------------------------------------------- share
-        //
-        // A phone is a dead end for playing, but it is the device in the
-        // visitor's hand, and the useful thing it can do is pass the link to a
-        // machine that has a keyboard. The native sheet is the entire feature:
-        // it reaches whatever that person actually reads later — Messages,
-        // their own inbox, AirDrop, Notes — while this page collects no address
-        // and owes them no mail afterwards. The same button on the sheet below
-        // is the ordinary one, aimed at someone else.
-        //
-        // The canonical URL rather than location.href, because this page is
-        // also served from a dev server and from local previews, and a link
-        // that only resolves on the machine that shared it is worse than no
-        // button at all. No text field: the og: tags already unfurl into a
-        // title, a description and a screenshot in every client that previews
-        // links, and supplying `text` is what makes several of them fall back
-        // to showing a bare string instead.
         const shareData = {
           title: document.title,
           url: document.querySelector('link[rel="canonical"]')?.href || location.href,
@@ -743,9 +612,6 @@
           (typeof navigator.canShare !== 'function' || navigator.canShare(shareData));
         const copyable = () => typeof navigator.clipboard?.writeText === 'function';
 
-        // Desktop Firefox has no share sheet at all, so without this the button
-        // would simply be missing for a large share of the visitors it is aimed
-        // at. Copying is the same errand with one more step.
         if (shareable() || copyable()) {
           for (const btn of document.querySelectorAll('[data-share]')) {
             btn.hidden = false;
@@ -753,11 +619,6 @@
             const label = btn.textContent;
             let restore;
 
-            // Confirming inside the button keeps the answer where the press
-            // was. Pinning the width first stops a shorter word from
-            // re-centring the row and shifting the cap beside it; "Copied" is
-            // one letter off "Share" for the same reason in the other
-            // direction, since min-width cannot stop the cap from growing.
             const say = (text) => {
               btn.style.minWidth = `${btn.offsetWidth}px`;
               btn.textContent = text;
@@ -774,10 +635,6 @@
                   await navigator.share(shareData);
                   return;
                 } catch (err) {
-                  // Dismissing the sheet is a decision, not a failure, and
-                  // must not then paste something into their clipboard.
-                  // Anything else — a browser that advertises share and
-                  // refuses it here — still has the fallback below.
                   if (err?.name === 'AbortError') return;
                 }
               }
@@ -785,19 +642,11 @@
               try {
                 await navigator.clipboard.writeText(shareData.url);
                 say('Copied');
-              } catch {
-                /* Denied clipboard permission; saying nothing beats lying. */
-              }
+              } catch {}
             });
           }
         }
 
-        // What decides this is the pointer, not the width. A touch device is a
-        // dead end — the game is typed with both hands — but a narrow window on
-        // a laptop is only narrow, and telling someone with a keyboard that
-        // they need a keyboard is worse than a small canvas. `pointer: coarse`
-        // reports the *primary* input, so it catches every phone and both iPad
-        // orientations while leaving a half-width desktop window alone.
         const touch = window.matchMedia('(pointer: coarse)');
 
         let started = false;
@@ -815,9 +664,6 @@
           start();
         }
 
-        // A trackpad connected to a tablet flips this, and the page should not
-        // need reloading to notice. Nothing was fetched while unsupported, so
-        // starting late costs only the download it was always going to cost.
         touch.addEventListener?.('change', (e) => {
           if (!e.matches) start();
           else if (!started) stage.dataset.mode = 'unsupported';
@@ -825,14 +671,6 @@
 
         function wire() {
 
-          // ------------------------------------------------------------ focus
-          //
-          // miniquad registers keyboard input on `canvas.onkeydown`, so the canvas
-          // holding focus is the difference between a playable game and a dead
-          // one. The bundle focuses it once at load; anything the visitor clicks
-          // after that takes it away silently, and SPACE then scrolls the page
-          // instead of firing star power. Take it back wherever the intent is
-          // obviously "play".
           const focusGame = () => {
             try {
               canvas.focus({ preventScroll: true });
@@ -843,14 +681,6 @@
 
           screen.addEventListener('pointerdown', focusGame);
 
-          // The picture filling the viewport *is* the intent to play, whatever
-          // happens to hold focus at the time. This used to reclaim only from
-          // `document.body`, which meant that following any link in the notes —
-          // "here", a charter, a licence — left focus on that anchor, and
-          // scrolling back to the game gave you a dead keyboard and a SPACE bar
-          // that scrolled the page. Nothing else on the page needs focus while
-          // the game owns the screen: miniquad swallows Tab (keycode 258), so
-          // there is no tab order to interrupt and nothing to steal from.
           let visible = 1;
           const reclaim = () => {
             if (visible > 0.75 && document.activeElement !== canvas) focusGame();
@@ -867,13 +697,10 @@
                 for (const entry of entries) visible = entry.intersectionRatio;
                 reclaim();
               },
-              // Enough steps that `visible` is roughly current whenever the
-              // window regains focus, rather than only at the 0.75 crossing.
               { threshold: [0, 0.25, 0.5, 0.75, 0.9, 1] }
             ).observe(screen);
           }
 
-          // --------------------------------------------------- the drop-down
           let idle;
           const showDrop = (linger = 2200) => {
             screen.dataset.drop = '1';
@@ -882,16 +709,7 @@
               screen.dataset.drop = '';
             }, linger);
           };
-          // A pointermove is not proof that the pointer moved. WebKit re-runs
-          // what is under the cursor whenever something might have changed it
-          // and reports the answer as a move at the position the pointer was
-          // already at; pressing SHIFT is enough to provoke one. The game hands
-          // SHIFT to the whammy bar and to every capital letter, so a bar that
-          // trusted the event dropped over the highway mid-song, again and
-          // again, without the mouse having been touched. What the control is
-          // actually waiting for is new coordinates. The first event has none to
-          // compare against and counts as movement — the pointer had to arrive
-          // somehow — which costs at most one appearance on the way in.
+          // WebKit can fire pointermove without a coordinate change.
           let atX = null;
           let atY = null;
           screen.addEventListener('pointermove', (e) => {
@@ -904,57 +722,28 @@
             clearTimeout(idle);
             screen.dataset.drop = '';
           });
-          // Reaching for the control must not start the clock that hides it.
           drop.addEventListener('pointerenter', () => {
             screen.dataset.drop = '1';
             clearTimeout(idle);
           });
           drop.addEventListener('pointerleave', () => showDrop(900));
-          // Clicking it must not cost the game its keyboard.
           fsBtn.addEventListener('mousedown', (e) => e.preventDefault());
 
-          // ------------------------------------------------------- fullscreen
-          //
-          // ESC is the game's pause key (playing.rs toggles `transport.paused`
-          // on it) and the Fullscreen API wants the same key for its own exit.
-          // Only one of them can have it.
-          //
-          // Chromium lends it back through Keyboard Lock, and there ESC pauses
-          // in place while a *held* ESC leaves. Nothing else implements it, and
-          // on those browsers the key cannot be shared at all: Safari spends it
-          // on the exit and only hands the keydown to the page afterwards, once
-          // the animated transition is over. A pause that arrives then has
-          // already cost the run every note that fell during the transition,
-          // and no amount of arranging on this side can move it earlier — the
-          // exit event is the first the page hears of it.
-          //
-          // So where the key cannot be kept, the fullscreen is not the
-          // browser's. The stage is pinned over the viewport instead: nothing
-          // intercepts ESC, it reaches the canvas in a millisecond and pauses
-          // instantly, and this button is the way back out. The cost is the
-          // browser's own chrome staying on screen.
+          // Use page fullscreen when the browser needs Escape, since Escape pauses the game.
           const enterFs = stage.requestFullscreen ?? stage.webkitRequestFullscreen;
           const exitFs = document.exitFullscreen ?? document.webkitExitFullscreen;
           const fsElement = () => document.fullscreenElement ?? document.webkitFullscreenElement;
 
-          // Learned by asking rather than inferred from the API's presence —
-          // Keyboard Lock can exist and still refuse. Kept because it is a
-          // property of the browser, not of the session, so the one flicker it
-          // costs to find out happens once.
           const LOCK_MEMO = 'keyboardwarrior.esclock.v1';
           let escCustody = null;
           try {
             escCustody = localStorage.getItem(LOCK_MEMO);
-          } catch {
-            /* private mode: re-learn it each visit */
-          }
+          } catch {}
           const recordCustody = (verdict) => {
             escCustody = verdict;
             try {
               localStorage.setItem(LOCK_MEMO, verdict);
-            } catch {
-              /* still right for this session */
-            }
+            } catch {}
           };
 
           const setFilled = (mode) => {
@@ -963,23 +752,18 @@
             document.documentElement.classList.toggle('kw-filled', mode === 'page');
             fsBtn.textContent = mode ? 'Exit fullscreen' : 'Fullscreen';
             if (mode) showDrop(4000);
-            // miniquad only re-reads the canvas box on a window resize, and
-            // neither transition reliably produces one.
+            // Miniquad only resizes its canvas after a window resize event.
             requestAnimationFrame(() => {
               window.dispatchEvent(new Event('resize'));
               focusGame();
             });
           };
 
-          // Worth trying the browser's own fullscreen: the API is here, it has
-          // not already refused to lend ESC back, and there is a fullscreen to
-          // ask for.
           const worthAsking = () =>
             !!enterFs && escCustody !== 'denied' && typeof navigator.keyboard?.lock === 'function';
 
           let pageAfterExit = false;
           const fallBackToPage = () => {
-            // It would keep ESC. Come back out and fill the page instead.
             recordCustody('denied');
             pageAfterExit = true;
             exitFs.call(document);
@@ -1018,12 +802,6 @@
           document.addEventListener('webkitfullscreenchange', onFullscreenChange);
         }
 
-        // ------------------------------------------------------------- boot
-        //
-        // Straight into the game: it draws its own boot screen while the songs
-        // arrive, and its menu is a better first frame than anything this page
-        // could put in front of it. The audio context is resumed by the first
-        // keystroke or click, wherever it lands (see web/kw_audio.js).
         function boot() {
           const fail = (text) => {
             stage.dataset.mode = 'error';
@@ -1035,9 +813,6 @@
           }
           load('keyboardwarrior.wasm');
 
-          // `wasm_exports` is the bundle's own handle on the instantiated module.
-          // If it never turns up, something is wrong with the build rather than
-          // slow, and a download link beats an indefinite black rectangle.
           const startedAt = Date.now();
           const poll = setInterval(() => {
             if (typeof wasm_exports !== 'undefined' && wasm_exports) {

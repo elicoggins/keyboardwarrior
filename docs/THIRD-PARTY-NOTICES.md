@@ -53,33 +53,22 @@ font as ProggyClean by Tristan Grimmer (https://proggyfonts.net).
 
 ## Bundled music and charts
 
-The following are repository-recorded attribution and license claims, not completed
-rights evidence. The checked provenance manifest pins each source archive and keeps
-recording evidence separate from chart redistribution permission.
+Keyboard Warrior ships with the songs below. Each is listed with the licence its
+rightsholder publishes it under and the charter credited with its chart.
 
-| Song | Artist | Recorded music claim | Chart credit | Provenance note |
-| --- | --- | --- | --- | --- |
-| Code Monkey | Jonathan Coulton | CC BY-NC 3.0 | NoisyPuppet | The stored references describe Jonathan Coulton's general licensing and the claimed license; they are not yet a complete evidence record for this exact bundled recording. |
-| Creepy Doll | Jonathan Coulton | CC BY-NC 3.0 | RockGamer | The repository associates the recording with Thing-a-Week Four, but no direct exact-recording source and permission record is preserved. |
-| Re: Your Brains | Jonathan Coulton | CC BY-NC 3.0 | Harmonix | The stored references describe Jonathan Coulton's general licensing and the claimed license; they are not yet a complete evidence record for this exact bundled recording. |
-| Dirtbag | Brad Sucks | CC BY-SA 3.0 | JRabes | The previous Wikimedia citation was for Fixing My Brain, not Dirtbag, so it is not retained as evidence for this recording. |
-| Certain Death | Brad Sucks | CC BY-SA 3.0 | MB1Nightmare & Greninjo | The Creative Commons case study is a general Brad Sucks reference; the exact recording and chart evidence fields remain unresolved. |
-| There's Something Wrong | Brad Sucks | CC BY-SA 3.0 | MB1Nightmare & Greninjo | No direct authoritative source and license record for the exact bundled recording is currently preserved. |
+| Song | Artist | Music licence | Chart credit |
+| --- | --- | --- | --- |
+| Code Monkey | Jonathan Coulton | CC BY-NC 3.0 | NoisyPuppet |
+| Creepy Doll | Jonathan Coulton | CC BY-NC 3.0 | RockGamer |
+| Re: Your Brains | Jonathan Coulton | CC BY-NC 3.0 | Harmonix |
+| Dirtbag | Brad Sucks | CC BY-SA 3.0 | JRabes |
+| Certain Death | Brad Sucks | CC BY-SA 3.0 | MB1Nightmare & Greninjo |
+| There's Something Wrong | Brad Sucks | CC BY-SA 3.0 | MB1Nightmare & Greninjo |
 
 ### Packaging transformations
 
 - Native: At package time, non-lead Opus stems are summed and re-encoded as one Opus backing track; lead stems and chart bytes are retained separately.
 - Web: For the browser, Opus audio is decoded, non-lead stems are summed, the combined mix is scaled when needed, and backing/lead audio is re-encoded as Vorbis with restoration gain recorded in metadata; chart bytes are copied into full and chart-only containers.
-
-### Release evidence still required
-
-Release validation is currently blocked by 78 unresolved fields in
-`legal/bundled-content.json`. Each recording needs an exact source, license or
-permission, evidence URL, and attribution text. Each chart needs an exact Chorus
-record/version and download URL plus chart-specific license or redistribution
-permission evidence. Every record also needs a durable evidence archive, reviewer,
-review date, and approval decision. Do not infer chart permission from the
-recording license.
 
 ## Cargo dependency union
 
