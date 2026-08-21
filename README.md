@@ -27,7 +27,7 @@ Keyboard Warrior puts a spin on Guitar Hero-like rhythm games by assigning a let
 - **O** — options
 - **ESC** — pause
 
-Calibrate your latency the first time you play (**O** → calibration). Every
+Calibrate your latency the first time you play (**C** → calibration). Every
 display and audio setup has some delay, and the game can't judge your timing
 fairly until it knows yours.
 
