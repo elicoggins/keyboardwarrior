@@ -6,7 +6,7 @@ Copying off the homework of the wonderful projects [Clone Hero](https://cloneher
 Free, lightweight, and compatible with your existing chart library. Built-in bridge to [Chorus Encore](https://www.enchor.us/)
 to download community charts.
 
-Available on macOS, Windows and Linux, as well as a playable demo:
+Available on macOS, Windows and Linux, as well as a playable browser demo:
 
 **[▶ Play in your browser](https://keyboardwarrior.app)**
 
@@ -31,7 +31,7 @@ Calibrate your latency the first time you play (**C** → calibration). Every
 display and audio setup has some delay, and the game can't judge your timing
 fairly until it knows yours.
 
-If you change your setup (switch to headphones, etc) **O** to recalibrate takes seconds.
+If you change your setup (switch to headphones, etc) **C** to recalibrate takes seconds.
 
 ## Download
 
@@ -146,3 +146,10 @@ What changed between versions is in [CHANGELOG.md](CHANGELOG.md).
 - **[WebAssembly](https://webassembly.org)** — web audio swap for WASM demo
 
 Full dependency list and licenses: [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+## Support
+
+Keyboard Warrior is free to download, play and share at no cost.
+If you are looking for a way to support the developer, [buy me a coffee on Ko-fi](https://ko-fi.com/elicoggins).
+
+Your support is never expected but always appreciated.
