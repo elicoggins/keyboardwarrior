@@ -7,21 +7,22 @@ saved settings, scores or song libraries work.
 
 ## 1.3.0 — 2026-08-30
 
-- The rebuilt word algorithm follows each chart's musical phrasing, keeps tiny
-  prompts occasional, favors smoother transitions across every supported
-  keyboard layout, and can place selected words in time with chart lyrics.
+- **Word Algorithm** - spent lots of time building out a more sophisticated word selection algorithm.
+  The over reliance on 8 letter words has been toned down, and word selection now accounts for ergonomics,
+  lane distribution, and musical flow. Impact lyrics have also been added - a few times a song you'll see a lyric
+  appear to type (if lyrics are available on chart)
+- **Highway options** now include strike-line position, note size, center gap,
+  center guides, word size, and the number of visible word rows, all reflected
+  in the live preview. This gives users much more control and the ability to move
+  words higher up on the screen without blocking falling notes to ease vision.
 - **Long empty sections are skippable.** Hold SPACE when the prompt appears and
   a 4-3-2-1 count brings you back in before the next note.
-- **Results now show where your timing went.** Every judgement is split into
+- **Enhanced results screen** Every judgement is split into
   EARLY and LATE counts alongside an average timing offset. When a run exposes
   a consistent offset, press A to apply the suggested calibration adjustment.
-- Turn on timing labels to replace GREAT and GOOD with EARLY, LATE, VERY EARLY,
-  and VERY LATE while you play.
-- Chorus Encore search now has guitar-difficulty filters, SPACE-bar song
-  previews, and more results that load as you scroll.
-- Highway options now include strike-line position, note size, center gap,
-  center guides, word size, and the number of visible word rows, all reflected
-  in the live preview.
+- Turn on new 'timing labels' option to replace GREAT and GOOD feedback with EARLY, LATE, VERY EARLY,
+  and VERY LATE mid song.
+- Space bar to preview songs on Download screen
 
 ## 1.2.0 — 2026-08-21
 

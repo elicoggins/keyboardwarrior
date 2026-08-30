@@ -84,6 +84,7 @@ rightsholder publishes it under and the charter credited with its chart.
 | Crate | Version | License expression | Target graphs |
 | --- | --- | --- | --- |
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| aho-corasick | 1.1.5 | Unlicense OR MIT | Linux, macOS, Windows, WebAssembly |
 | allocator-api2 | 0.2.21 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | alsa | 0.11.0 | Apache-2.0/MIT | Linux |
 | alsa-sys | 0.4.0 | MIT | Linux |
@@ -176,6 +177,9 @@ rightsholder publishes it under and the charter credited with its chart.
 | quote | 1.0.46 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | rayon | 1.12.0 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | rayon-core | 1.13.0 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| regex | 1.13.1 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| regex-automata | 0.4.18 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| regex-syntax | 0.8.11 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | ring | 0.17.14 | Apache-2.0 AND ISC | Linux, macOS, Windows |
 | rustls | 0.23.42 | Apache-2.0 OR ISC OR MIT | Linux, macOS, Windows |
 | rustls-pki-types | 1.15.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
