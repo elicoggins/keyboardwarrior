@@ -1,8 +1,10 @@
 // Browser-side support for the demo: its display-paced frame clock, followed
 // by the Web Audio backend. A ScriptProcessorNode pulls the game's own Rust
-// mixer (audio::Mixer, exported as kw_render) for every buffer, so the browser
-// plays the exact same mix the native cpal callback produces — and the mixer's
-// frame counter stays the game clock.
+// mixer (audio::Mixer, exported as kw_render) for every buffer, so the song,
+// guide and UI mix stays identical to native and the mixer's frame counter
+// remains the game clock. Latency-critical judgement samples use a direct
+// AudioBuffer path below; putting physical-key feedback through a queued
+// ScriptProcessor buffer would make the response arrive tens of ms late.
 //
 // Registered as a miniquad plugin so `kw_audio_start` exists as a wasm
 // import before the module is instantiated.
@@ -199,6 +201,35 @@
     // restart it behind the decode's back.
     let wantRunning = true;
 
+    let hitSounds = [];
+
+    // Copy the three embedded CC0 samples out of wasm exactly once. Keeping
+    // ready-to-play AudioBuffers avoids both decode work and oscillator setup
+    // on the keydown path, while sharing the native build's actual sounds.
+    function prepareHitSounds() {
+        // Default release builds omit the unfinished feedback-sounds feature
+        // and therefore do not export its embedded PCM bridge.
+        if (typeof wasm_exports.kw_hit_pcm_rate !== "function") {
+            hitSounds = [];
+            return;
+        }
+        const sampleRate = wasm_exports.kw_hit_pcm_rate();
+        hitSounds = [0, 1, 2].map(function (kind) {
+            const ptr = wasm_exports.kw_hit_pcm_ptr(kind);
+            const frames = wasm_exports.kw_hit_pcm_frames(kind);
+            if (!ptr || !frames || !sampleRate) return null;
+            const source = new DataView(wasm_memory.buffer, ptr, frames * 4);
+            const buffer = ctx.createBuffer(2, frames, sampleRate);
+            const left = buffer.getChannelData(0);
+            const right = buffer.getChannelData(1);
+            for (let i = 0; i < frames; i++) {
+                left[i] = source.getInt16(i * 4, true) / 32768;
+                right[i] = source.getInt16(i * 4 + 2, true) / 32768;
+            }
+            return buffer;
+        });
+    }
+
     // Ask the browser to start (or restart) the context, if the game wants it.
     //
     // The condition is "not running", never "is suspended". A context created
@@ -224,6 +255,7 @@
 
     function kw_audio_start() {
         ctx = new (window.AudioContext || window.webkitAudioContext)();
+        prepareHitSounds();
         // 2048-frame pulls: ~43 ms at 48 kHz. Small enough that the game
         // clock stays smooth, large enough that a main-thread callback
         // doesn't underrun every time a frame runs long.
@@ -290,6 +322,23 @@
         return lag;
     }
 
+    // Physical-key feedback cannot wait behind the song mixer's 2048-frame
+    // pull (~43 ms at 48 kHz). Start a prepared sample directly on the
+    // AudioContext instead; the browser can then deliver it at its next render
+    // quantum, which is the earliest software can respond to the keypress.
+    function kw_audio_hit(kind, volume) {
+        if (!ctx || !Number.isFinite(volume) || volume <= 0) return;
+        const buffer = hitSounds[kind];
+        if (!buffer) return;
+        const source = ctx.createBufferSource();
+        const gain = ctx.createGain();
+        source.buffer = buffer;
+        gain.gain.value = Math.min(volume, 1);
+        source.connect(gain);
+        gain.connect(ctx.destination);
+        source.start(ctx.currentTime);
+    }
+
     // The wasm decode runs on this same (main) thread and blocks the event
     // loop for hundreds of ms, so onaudioprocess can't fire and the pipeline
     // underruns into clicks. The game suspends the context across a decode:
@@ -319,15 +368,10 @@
         return avoidDefaultClear ? 1 : 0;
     }
 
-    // The demo's one non-audio hook: the menu's "download to expand library"
-    // row opens the project page. It rides in this file rather than a script
-    // of its own because the portfolio site serves its own index.html — a new
-    // <script> tag there is outside this repo, and a missing import doesn't
-    // degrade, it fails the whole wasm instantiation.
-    //
-    // The URL comes from Rust (web::DOWNLOAD_URL) as a pointer into the wasm
-    // heap, so the address the menu prints on screen and the one opened here
-    // can't drift apart.
+    // Keep the demo's project-page hook in this required bridge: the public
+    // Pages wrapper owns its index.html, and a missing optional import would
+    // fail wasm instantiation. Rust supplies the URL so display and behavior
+    // cannot drift apart.
     function kw_open_url(ptr, len) {
         const url = new TextDecoder().decode(new Uint8Array(wasm_memory.buffer, ptr, len));
         // The keypress that got here is a frame or two old, so the browser's
@@ -348,6 +392,7 @@
         register_plugin: function (importObject) {
             importObject.env.kw_audio_start = kw_audio_start;
             importObject.env.kw_audio_lag = kw_audio_lag;
+            importObject.env.kw_audio_hit = kw_audio_hit;
             importObject.env.kw_audio_suspend = kw_audio_suspend;
             importObject.env.kw_audio_resume = kw_audio_resume;
             importObject.env.kw_webgl_avoid_default_clear = kw_webgl_avoid_default_clear;

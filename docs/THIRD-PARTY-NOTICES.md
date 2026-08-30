@@ -51,6 +51,15 @@ font as ProggyClean by Tristan Grimmer (https://proggyfonts.net).
 `assets/font.png` is a raster atlas derived from that file by
 `examples/make_font.rs`.
 
+### Kenney Interface Sounds
+
+The PERFECT, GREAT, and GOOD judgement samples and chart-guide tick are adapted
+from `pluck_001`, `select_001`, `click_001`, and `tick_001` in Kenney's
+Interface Sounds 1.0 pack. Kenney released the pack under Creative Commons Zero
+1.0 (CC0). The source pack is available at
+https://kenney.nl/assets/interface-sounds and its CC0 dedication is at
+https://creativecommons.org/publicdomain/zero/1.0/.
+
 ## Bundled music and charts
 
 Keyboard Warrior ships with the songs below. Each is listed with the licence its
