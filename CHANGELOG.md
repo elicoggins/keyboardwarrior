@@ -5,6 +5,37 @@ Notable changes to Keyboard Warrior, newest first. Versions follow
 digit adds things, the major digit is reserved for a release that changes how
 saved settings, scores or song libraries work.
 
+## 2.0.0 — 2026-09-18
+
+- **Build your own highway.** The reorganized Highway settings include a live
+  preview and a full-screen editor with independent lane width and center gap,
+  fine adjustments, undo and reset controls, custom speed references, and new
+  Classic and Pixel note styles. Existing highway settings migrate forward and
+  retain compatible values for older builds.
+- **New sound options.** Keyboard navigation and typing sounds now ship by
+  default, with Classic navigation available as an alternative. Gameplay adds
+  three hit-sound styles, a chart-guide cue, independent volumes that start
+  off, and in-menu auditions.
+- **Fairer timing and scoring.** Input timestamps now survive frame processing,
+  late frames no longer turn on-time presses into misses, sustain scoring uses
+  elapsed song time, and stray presses count against the results grade.
+  Calibration suggestions now require stronger evidence.
+- **Practice follows the chart.** Calibration keeps the same real delay at
+  every practice speed, section labels follow the selected instrument, resume
+  counts use the local tempo, and restarting a loop clears dropped sustains.
+- **Safer libraries and downloads.** Scans can be cancelled without losing the
+  previous library, unavailable folders stay visible with actionable errors,
+  Chorus downloads continue away from search, and permanent song deletion now
+  requires a source-bound confirmation.
+- **More reliable settings and saves.** Failed settings and score writes retry
+  automatically. Historical settings and score formats migrate safely, text
+  fields keep printable global shortcuts from firing, reduced-motion coverage
+  is broader, and Windows/Linux gain a saved fullscreen option.
+- **Browser and platform polish.** The browser input path preserves physical
+  key identity and event timing, the WebAssembly audio contract has expanded
+  checks, and the release includes extensive rendering, memory, and failure-path
+  hardening across native and browser builds.
+
 ## 1.3.0 — 2026-08-30
 
 - **Word Algorithm** - spent lots of time building out a more sophisticated word selection algorithm.

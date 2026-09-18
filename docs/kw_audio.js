@@ -159,7 +159,9 @@
     const clockEpoch = Number.isFinite(performance.timeOrigin)
         ? performance.timeOrigin
         : Date.now() - performance.now();
+    importObject.env.kw_input_clock = () => performance.now() / 1000;
     let frameTime = null;
+    importObject.env.kw_input_frame_clock = () => (frameTime === null ? performance.now() : frameTime) / 1000;
     const runAnimationFrame = animation;
     animation = function (timestamp) {
         frameTime = timestamp;
@@ -203,7 +205,7 @@
 
     let hitSounds = [];
 
-    // Copy the three embedded CC0 samples out of wasm exactly once. Keeping
+    // Copy the embedded contact samples out of wasm exactly once. Keeping
     // ready-to-play AudioBuffers avoids both decode work and oscillator setup
     // on the keydown path, while sharing the native build's actual sounds.
     function prepareHitSounds() {
@@ -214,7 +216,8 @@
             return;
         }
         const sampleRate = wasm_exports.kw_hit_pcm_rate();
-        hitSounds = [0, 1, 2].map(function (kind) {
+        const count = typeof wasm_exports.kw_hit_pcm_count === "function" ? wasm_exports.kw_hit_pcm_count() : 3;
+        hitSounds = Array.from({length: count}, function (_, kind) {
             const ptr = wasm_exports.kw_hit_pcm_ptr(kind);
             const frames = wasm_exports.kw_hit_pcm_frames(kind);
             if (!ptr || !frames || !sampleRate) return null;
@@ -278,6 +281,7 @@
             anchorTime = pt;
             rendered += n;
             const ptr = wasm_exports.kw_render(n);
+            if (!ptr) return;
             const mix = new Float32Array(wasm_memory.buffer, ptr, n * 2);
             const l = out.getChannelData(0);
             const r = out.getChannelData(1);
@@ -388,8 +392,47 @@
         else window.location.href = url;
     }
 
+    // Full song downloads belong to one Loading scene. Aborting removes the
+    // entry first so a late fetch completion cannot publish stale song bytes.
+    const songFetches = new Map();
+    let nextSongFetch = 1;
+    function kw_song_fetch_start(ptr, len) {
+        const url = new TextDecoder().decode(new Uint8Array(wasm_memory.buffer, ptr, len));
+        const id = nextSongFetch++;
+        const task = { controller: new AbortController(), bytes: null, failed: false };
+        songFetches.set(id, task);
+        fetch(url, { signal: task.controller.signal }).then(response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.arrayBuffer();
+        }).then(bytes => {
+            if (songFetches.get(id) === task) task.bytes = new Uint8Array(bytes);
+        }).catch(() => {
+            if (songFetches.get(id) === task) task.failed = true;
+        });
+        return id;
+    }
+    function kw_song_fetch_size(id) {
+        const task = songFetches.get(id);
+        if (!task || task.failed) return -1;
+        return task.bytes === null ? 0 : (task.bytes.length || -1);
+    }
+    function kw_song_fetch_read(id, ptr, len) {
+        const task = songFetches.get(id);
+        if (task && task.bytes) new Uint8Array(wasm_memory.buffer, ptr, len).set(task.bytes.subarray(0, len));
+        songFetches.delete(id);
+    }
+    function kw_song_fetch_cancel(id) {
+        const task = songFetches.get(id);
+        songFetches.delete(id);
+        if (task) task.controller.abort();
+    }
+
     miniquad_add_plugin({
         register_plugin: function (importObject) {
+            importObject.env.kw_song_fetch_start = kw_song_fetch_start;
+            importObject.env.kw_song_fetch_size = kw_song_fetch_size;
+            importObject.env.kw_song_fetch_read = kw_song_fetch_read;
+            importObject.env.kw_song_fetch_cancel = kw_song_fetch_cancel;
             importObject.env.kw_audio_start = kw_audio_start;
             importObject.env.kw_audio_lag = kw_audio_lag;
             importObject.env.kw_audio_hit = kw_audio_hit;

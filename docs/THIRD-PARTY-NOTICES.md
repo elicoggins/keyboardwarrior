@@ -37,9 +37,11 @@ under MIT OR Apache-2.0. Upstream source is available at
 https://github.com/not-fl3/macroquad.
 
 `web/mq_js_bundle.js` is derived from `js/mq_js_bundle.js` in macroquad 0.4.16
-and has one local strict-mode fix: the quad-net `register_plugin` assignment is
-declared with `var`. `scripts/check_vendored_assets.py` verifies the locked
-crate checksum, upstream file hash, exact patch, and committed output.
+with local corrections for quad-net's strict-mode declaration and browser
+keyboard input. Apostrophe/slash physical codes match miniquad's protocol;
+characters forwarded while preventing browser shortcuts retain the OS layout.
+`scripts/check_vendored_assets.py` verifies the locked crate checksum, upstream
+file hash, exact patches, and committed output.
 
 ### ProggyClean
 
@@ -59,6 +61,21 @@ Interface Sounds 1.0 pack. Kenney released the pack under Creative Commons Zero
 1.0 (CC0). The source pack is available at
 https://kenney.nl/assets/interface-sounds and its CC0 dedication is at
 https://creativecommons.org/publicdomain/zero/1.0/.
+
+### Recorded keyboard sounds
+
+Menu typing uses five keystroke recordings from **vintage keyboard** by
+**jim-ph**, released under Creative Commons Zero 1.0 (CC0):
+https://freesound.org/people/jim-ph/packs/12363/.
+Freesound sound IDs 194795–194799 were obtained as public high-quality MP3
+previews, trimmed, level-matched, and converted to PCM. Source URLs and hashes
+are retained in `assets/sfx/typing/sources.json`. The CC0 dedication is at
+https://creativecommons.org/publicdomain/zero/1.0/.
+
+Confirmations use **enter key** by **uEffects**, Freesound sound ID 180997,
+also released under CC0: https://freesound.org/people/uEffects/sounds/180997/.
+Its public high-quality MP3 preview was trimmed, level-matched, and converted
+to PCM; the source and checksum are retained with the other keyboard recordings.
 
 ## Bundled music and charts
 

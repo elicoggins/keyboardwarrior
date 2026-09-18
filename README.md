@@ -32,6 +32,52 @@ display and audio setup has some delay, and the game can't judge your timing
 fairly until it knows yours.
 
 If you change your setup (switch to headphones, etc) **C** to recalibrate takes seconds.
+Calibration uses fresh taps and keeps the same real delay at every practice speed.
+Practice sections and resume ticks follow the selected instrument and local tempo.
+
+## Arrange your game
+
+Open **O** for Gameplay, Highway, Sound, and Song Folders.
+Use **TAB / SHIFT+TAB** to switch.
+
+**Windows and Linux:** use **F11** from any screen, or **Gameplay → Display →
+fullscreen**, to switch between windowed and fullscreen. The choice is saved;
+switching during a song pauses it. Windows uses borderless fullscreen on the
+window's current monitor and restores its previous window placement on exit.
+macOS uses its native full-screen window control; the web demo uses the browser's
+full-screen command, so neither adds a duplicate game setting.
+
+**Highway** shows its settings beside a small live preview. **P** opens the
+full keyboard editor to see changes at gameplay scale; **ESC** or **P** returns
+to the Highway tab. **Word height** raises or lowers the centered words with
+**LEFT / RIGHT** in either view. Adjust lane width and center gap separately;
+**SHIFT** gives finer lane steps. **SPACE** pauses the sample, **R** resets one
+control, **D** resets the highway, and **Z** undoes the last change.
+Speed controls show the preset equivalents alongside custom speed: Slow 0.77x,
+Normal 1.00x, Fast 1.33x, and Turbo 1.82x.
+**Note style** offers **Classic** (the default) and **Pixel**.
+
+Existing word-height settings are preserved. Saves from the temporary free-position
+editor convert to the nearest supported height. Settings stay readable by older
+builds, with compatible approximations for newer lane layouts. Older builds may
+discard options they do not recognize when saving.
+
+**Sound** offers Keycap, Rim, and Soft hit sounds. **A / S / D** audition the
+three success judgements; **F** auditions the guide cue. Auditions play at 55%
+minimum, independently of the selected song levels. Hit and guide volumes both
+start off. Wired audio gives the quickest response.
+
+**Gameplay → reduced motion** keeps note movement and timing feedback while
+suppressing shake, particles, decorative pulses, and scrolling search titles.
+Mavis settings show the active keys and keep at least one hand and row enabled.
+Hold **H** on the song menu for a controls reminder. **ESC** cancels a song load
+or library scan; errors stay visible until dismissed with **F8**. Unavailable
+folders keep their previous songs listed with an error instead of silently
+removing them.
+
+Settings and personal bests retry failed saves automatically while the game
+stays open, including when paused. Typing **- / +** in a search or path field
+does not change volume.
 
 ## Download
 
@@ -39,9 +85,9 @@ Grab the latest release below or check out the [Releases page](../../releases).
 
 | Platform | File |
 | --- | --- |
-| macOS (Apple Silicon **and** Intel) | [`KeyboardWarrior-1.3.0-macOS-universal.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.3.0/KeyboardWarrior-1.3.0-macOS-universal.zip) |
-| Windows (x86-64) | [`KeyboardWarrior-1.3.0-windows-x86_64.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.3.0/KeyboardWarrior-1.3.0-windows-x86_64.zip) |
-| Linux (x86-64) | [`KeyboardWarrior-1.3.0-linux-x86_64.tar.gz`](https://github.com/elicoggins/keyboardwarrior/releases/download/v1.3.0/KeyboardWarrior-1.3.0-linux-x86_64.tar.gz) |
+| macOS (Apple Silicon **and** Intel) | [`KeyboardWarrior-2.0.0-macOS-universal.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v2.0.0/KeyboardWarrior-2.0.0-macOS-universal.zip) |
+| Windows (x86-64) | [`KeyboardWarrior-2.0.0-windows-x86_64.zip`](https://github.com/elicoggins/keyboardwarrior/releases/download/v2.0.0/KeyboardWarrior-2.0.0-windows-x86_64.zip) |
+| Linux (x86-64) | [`KeyboardWarrior-2.0.0-linux-x86_64.tar.gz`](https://github.com/elicoggins/keyboardwarrior/releases/download/v2.0.0/KeyboardWarrior-2.0.0-linux-x86_64.tar.gz) |
 
 ### macOS: first launch
 
@@ -88,7 +134,19 @@ touches your library:
 | Your songs | `~/Library/Application Support/keyboardwarrior/songs/` | `%APPDATA%\keyboardwarrior\songs\` | `~/.local/share/keyboardwarrior/songs/` |
 | Settings and scores | `~/Library/Application Support/keyboardwarrior/` | `%APPDATA%\keyboardwarrior\` | `~/.config/keyboardwarrior/` |
 
-Or point the app right at your existing library. Multiple directories supported at one time.
+Or point the app right at your existing library in **O → Song Folders**.
+The keyboard path prompt supports paste, caret editing, **Shift** selection, and
+**Tab / Shift+Tab** to cycle folder completions. Unicode paths are preserved;
+characters outside the game font display as `[U+XXXX]`. Multiple directories
+can be enabled together.
+
+Chorus downloads continue when you leave search. Progress and completion remain
+visible, and the library refreshes when you return to the song menu.
+
+Deleting a song from the menu takes two consecutive **Delete / Backspace**
+presses. The confirmation names permanent removal of the song file or folder;
+another action or leaving the menu cancels it. Bundled songs are protected.
+Cancelling the subsequent scan does not undo a completed deletion.
 
 ## Bundled music
 
