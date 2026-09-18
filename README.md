@@ -62,7 +62,7 @@ editor convert to the nearest supported height. Settings stay readable by older
 builds, with compatible approximations for newer lane layouts. Older builds may
 discard options they do not recognize when saving.
 
-**Sound** offers Keycap, Rim, and Soft hit sounds. **A / S / D** audition the
+**Sound** offers Low, Mid, and High hit sounds. **A / S / D** audition the
 three success judgements; **F** auditions the guide cue. Auditions play at 55%
 minimum, independently of the selected song levels. Hit and guide volumes both
 start off. Wired audio gives the quickest response.
