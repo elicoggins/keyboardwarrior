@@ -140,8 +140,9 @@ The keyboard path prompt supports paste, caret editing, **Shift** selection, and
 characters outside the game font display as `[U+XXXX]`. Multiple directories
 can be enabled together.
 
-Chorus downloads continue when you leave search. Progress and completion remain
-visible, and the library refreshes when you return to the song menu.
+Chorus downloads continue when you leave search. A download completed on the
+search screen refreshes the library immediately and selects the new song;
+completion elsewhere refreshes when you return to the song menu.
 
 Deleting a song from the menu takes two consecutive **Delete / Backspace**
 presses. The confirmation names permanent removal of the song file or folder;
