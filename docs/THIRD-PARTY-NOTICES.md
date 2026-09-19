@@ -198,9 +198,9 @@ rightsholder publishes it under and the charter credited with its chart.
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | ring | 0.17.14 | Apache-2.0 AND ISC | Linux, macOS, Windows |
-| rustls | 0.23.42 | Apache-2.0 OR ISC OR MIT | Linux, macOS, Windows |
+| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | Linux, macOS, Windows |
 | rustls-pki-types | 1.15.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
-| rustls-webpki | 0.103.13 | ISC | Linux, macOS, Windows |
+| rustls-webpki | 0.103.15 | ISC | Linux, macOS, Windows |
 | serde | 1.0.228 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | serde_core | 1.0.228 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | serde_derive | 1.0.228 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
