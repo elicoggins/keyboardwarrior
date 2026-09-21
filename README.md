@@ -35,50 +35,6 @@ If you change your setup (switch to headphones, etc) **C** to recalibrate takes 
 Calibration uses fresh taps and keeps the same real delay at every practice speed.
 Practice sections and resume ticks follow the selected instrument and local tempo.
 
-## Arrange your game
-
-Open **O** for Gameplay, Highway, Sound, and Song Folders.
-Use **TAB / SHIFT+TAB** to switch.
-
-**Windows and Linux:** use **F11** from any screen, or **Gameplay → Display →
-fullscreen**, to switch between windowed and fullscreen. The choice is saved;
-switching during a song pauses it. Windows uses borderless fullscreen on the
-window's current monitor and restores its previous window placement on exit.
-macOS uses its native full-screen window control; the web demo uses the browser's
-full-screen command, so neither adds a duplicate game setting.
-
-**Highway** shows its settings beside a small live preview. **P** opens the
-full keyboard editor to see changes at gameplay scale; **ESC** or **P** returns
-to the Highway tab. **Word height** raises or lowers the centered words with
-**LEFT / RIGHT** in either view. Adjust lane width and center gap separately;
-**SHIFT** gives finer lane steps. **SPACE** pauses the sample, **R** resets one
-control, **D** resets the highway, and **Z** undoes the last change.
-Speed controls show the preset equivalents alongside custom speed: Slow 0.77x,
-Normal 1.00x, Fast 1.33x, and Turbo 1.82x.
-**Note style** offers **Classic** (the default) and **Pixel**.
-
-Existing word-height settings are preserved. Saves from the temporary free-position
-editor convert to the nearest supported height. Settings stay readable by older
-builds, with compatible approximations for newer lane layouts. Older builds may
-discard options they do not recognize when saving.
-
-**Sound** offers Low, Mid, and High hit sounds. **A / S / D** audition the
-three success judgements; **F** auditions the guide cue. Auditions play at 55%
-minimum, independently of the selected song levels. Hit and guide volumes both
-start off. Wired audio gives the quickest response.
-
-**Gameplay → reduced motion** keeps note movement and timing feedback while
-suppressing shake, particles, decorative pulses, and scrolling search titles.
-Mavis settings show the active keys and keep at least one hand and row enabled.
-Hold **H** on the song menu for a controls reminder. **ESC** cancels a song load
-or library scan; errors stay visible until dismissed with **F8**. Unavailable
-folders keep their previous songs listed with an error instead of silently
-removing them.
-
-Settings and personal bests retry failed saves automatically while the game
-stays open, including when paused. Typing **- / +** in a search or path field
-does not change volume.
-
 ## Download
 
 Grab the latest release below or check out the [Releases page](../../releases).
@@ -105,7 +61,7 @@ You only have to do this once - after that it launches normally.
 ### Windows: first launch
 
 Unzip the folder anywhere and run `keyboardwarrior.exe`. Keep the
-`bundled_songs` folder next to it — that's where the game looks for the bundled music.
+`bundled_songs` folder next to it - that's where the game looks for the bundled music.
 
 Windows Defender SmartScreen will show a blue **"Windows protected your PC"**
 box. Click **More info**, then **Run anyway**. Once again, only the first time.
