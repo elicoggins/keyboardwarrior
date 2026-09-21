@@ -587,9 +587,9 @@
       </footer>
     </main>
 
-    <script src="mq_js_bundle.js"></script>
+    <script src="mq_js_bundle.js?v=fba3529e2416"></script>
     <!-- Register the audio import before load(). -->
-    <script src="kw_audio.js"></script>
+    <script src="kw_audio.js?v=53039b7399bb"></script>
     <script>
       (() => {
         const stage = document.getElementById('stage');
@@ -811,7 +811,12 @@
             fail('The browser demo could not start here. The full game is free for macOS, Windows and Linux.');
             return;
           }
-          load('keyboardwarrior.wasm');
+          if (typeof importObject?.env?.kw_input_clock !== 'function'
+              || typeof importObject?.env?.kw_input_frame_clock !== 'function') {
+            fail('The browser loaded an outdated game file. Reload this page to try again.');
+            return;
+          }
+          load('keyboardwarrior.wasm?v=5461179baedb');
 
           const startedAt = Date.now();
           const poll = setInterval(() => {
