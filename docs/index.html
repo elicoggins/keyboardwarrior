@@ -52,6 +52,9 @@
       href="proggyclean.woff2"
       crossorigin
     />
+    <link rel="stylesheet" href="mobile.css?v=5" />
+    <script>document.documentElement.dataset.experience = matchMedia('(pointer: coarse)').matches ? 'mobile' : 'desktop';</script>
+    <noscript><style>@media (pointer: coarse) { .mobile-landing { display: block; } html body .stage, .sheet, .desktop-heading, .m-transport, #mobile-share, .m-link-note { display: none; } #mobile-share-fallback[hidden] { display: block !important; } }</style></noscript>
     <title>Keyboard Warrior · a rhythm typing game</title>
 
     <script type="application/ld+json">
@@ -451,6 +454,9 @@
 
       .foot {
         display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 0.4rem;
         justify-content: center;
         padding-top: clamp(1.6rem, 4vh, 2.4rem);
         font-size: 0.875rem;
@@ -459,6 +465,7 @@
 
       a { color: var(--ink); text-decoration: none; border-bottom: 1px solid var(--line); }
       a:hover, a:focus-visible { color: var(--amber); border-bottom-color: currentColor; }
+      .foot__byline { color: var(--dim); font-size: 1rem; }
       .foot a { border-bottom: 0; }
       .foot a { color: var(--faint); }
       .foot a:hover { color: var(--ink); }
@@ -481,7 +488,83 @@
   <body>
     <div class="field" aria-hidden="true"></div>
 
-    <h1 class="sr-only">Keyboard Warrior — a rhythm typing game</h1>
+    <h1 class="sr-only desktop-heading">Keyboard Warrior — a rhythm typing game</h1>
+
+    <main class="mobile-landing" aria-label="Keyboard Warrior for desktop">
+      <div class="m-composition">
+        <header class="m-masthead">
+          <h1><img class="m-wordmark" src="mobile-wordmark.png" width="1872" height="212" alt="Keyboard Warrior" /></h1>
+          <p class="m-subtitle">a rhythm typing game</p>
+        </header>
+
+        <figure class="m-performance">
+          <div class="m-film">
+            <video id="mobile-film" width="720" height="800" poster="mobile-film.jpg?v=3" data-src="mobile-film.mp4?v=3" preload="none" muted loop playsinline aria-label="Code Monkey, Expert difficulty. The opening played in Keyboard Warrior; each letter is typed as its note reaches the line."></video>
+          </div>
+          <div class="m-keys">
+            <svg viewBox="-1 -1 345 90" role="img" aria-label="The QWERTY keyboard. Keys light up with each note in the recording.">
+            <g class="m-key" data-key="q" style="color:#f59e1f" transform="translate(0 0)"><rect width="26" height="26"/><text x="13" y="18">Q</text></g>
+            <g class="m-key" data-key="w" style="color:#f59e1f" transform="translate(31 0)"><rect width="26" height="26"/><text x="13" y="18">W</text></g>
+            <g class="m-key" data-key="e" style="color:#fa731a" transform="translate(62 0)"><rect width="26" height="26"/><text x="13" y="18">E</text></g>
+            <g class="m-key" data-key="r" style="color:#fa731a" transform="translate(93 0)"><rect width="26" height="26"/><text x="13" y="18">R</text></g>
+            <g class="m-key" data-key="t" style="color:#fa731a" transform="translate(124 0)"><rect width="26" height="26"/><text x="13" y="18">T</text></g>
+            <g class="m-key" data-key="y" style="color:#577ab8" transform="translate(155 0)"><rect width="26" height="26"/><text x="13" y="18">Y</text></g>
+            <g class="m-key" data-key="u" style="color:#577ab8" transform="translate(186 0)"><rect width="26" height="26"/><text x="13" y="18">U</text></g>
+            <g class="m-key" data-key="i" style="color:#d9e0eb" transform="translate(217 0)"><rect width="26" height="26"/><text x="13" y="18">I</text></g>
+            <g class="m-key" data-key="o" style="color:#d9e0eb" transform="translate(248 0)"><rect width="26" height="26"/><text x="13" y="18">O</text></g>
+            <g class="m-key" data-key="p" style="color:#d9e0eb" transform="translate(279 0)"><rect width="26" height="26"/><text x="13" y="18">P</text></g>
+            <g class="m-key" data-key="a" style="color:#f59e1f" transform="translate(6.2 31)"><rect width="26" height="26"/><text x="13" y="18">A</text></g>
+            <g class="m-key" data-key="s" style="color:#f59e1f" transform="translate(37.2 31)"><rect width="26" height="26"/><text x="13" y="18">S</text></g>
+            <g class="m-key" data-key="d" style="color:#fa731a" transform="translate(68.2 31)"><rect width="26" height="26"/><text x="13" y="18">D</text></g>
+            <g class="m-key" data-key="f" style="color:#fa731a" transform="translate(99.2 31)"><rect width="26" height="26"/><text x="13" y="18">F</text></g>
+            <g class="m-key" data-key="g" style="color:#fa731a" transform="translate(130.2 31)"><rect width="26" height="26"/><text x="13" y="18">G</text></g>
+            <g class="m-key" data-key="h" style="color:#577ab8" transform="translate(161.2 31)"><rect width="26" height="26"/><text x="13" y="18">H</text></g>
+            <g class="m-key" data-key="j" style="color:#577ab8" transform="translate(192.2 31)"><rect width="26" height="26"/><text x="13" y="18">J</text></g>
+            <g class="m-key" data-key="k" style="color:#d9e0eb" transform="translate(223.2 31)"><rect width="26" height="26"/><text x="13" y="18">K</text></g>
+            <g class="m-key" data-key="l" style="color:#d9e0eb" transform="translate(254.2 31)"><rect width="26" height="26"/><text x="13" y="18">L</text></g>
+            <g class="m-key" data-key=";" style="color:#d9e0eb" transform="translate(285.2 31)"><rect width="26" height="26"/><text x="13" y="18">;</text></g>
+            <g class="m-key" data-key="&#x27;" style="color:#d9e0eb" transform="translate(316.2 31)"><rect width="26" height="26"/><text x="13" y="18">&#x27;</text></g>
+            <g class="m-key" data-key="z" style="color:#f59e1f" transform="translate(15.5 62)"><rect width="26" height="26"/><text x="13" y="18">Z</text></g>
+            <g class="m-key" data-key="x" style="color:#f59e1f" transform="translate(46.5 62)"><rect width="26" height="26"/><text x="13" y="18">X</text></g>
+            <g class="m-key" data-key="c" style="color:#fa731a" transform="translate(77.5 62)"><rect width="26" height="26"/><text x="13" y="18">C</text></g>
+            <g class="m-key" data-key="v" style="color:#fa731a" transform="translate(108.5 62)"><rect width="26" height="26"/><text x="13" y="18">V</text></g>
+            <g class="m-key" data-key="b" style="color:#fa731a" transform="translate(139.5 62)"><rect width="26" height="26"/><text x="13" y="18">B</text></g>
+            <g class="m-key" data-key="n" style="color:#577ab8" transform="translate(170.5 62)"><rect width="26" height="26"/><text x="13" y="18">N</text></g>
+            <g class="m-key" data-key="m" style="color:#577ab8" transform="translate(201.5 62)"><rect width="26" height="26"/><text x="13" y="18">M</text></g>
+            <g class="m-key" data-key="," style="color:#d9e0eb" transform="translate(232.5 62)"><rect width="26" height="26"/><text x="13" y="18">,</text></g>
+            <g class="m-key" data-key="." style="color:#d9e0eb" transform="translate(263.5 62)"><rect width="26" height="26"/><text x="13" y="18">.</text></g>
+            <g class="m-key" data-key="/" style="color:#d9e0eb" transform="translate(294.5 62)"><rect width="26" height="26"/><text x="13" y="18">/</text></g>
+            </svg>
+          </div>
+          <figcaption class="m-recording">
+            <div><p>Code Monkey <span class="m-difficulty">EXPERT</span></p><p class="m-artist">Jonathan Coulton</p></div>
+            <span class="m-time" id="mobile-time" aria-hidden="true">0:00 / 0:24</span>
+          </figcaption>
+          <div class="m-transport">
+            <button class="m-control m-sound" id="mobile-sound" type="button" aria-label="Listen to gameplay" aria-pressed="false"><svg class="m-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 7h4V5h2V3h2v14H8v-2H6v-2H2z"/><path class="m-icon--muted" d="m13 6 2 2 2-2 1.5 1.5-2 2 2 2-1.5 1.5-2-2-2 2-1.5-1.5 2-2-2-2z"/><path class="m-icon--audible" d="M13 6h2v8h-2zm3-3h2v14h-2z"/></svg><span id="mobile-sound-label">Unmute</span></button>
+            <button class="m-control" id="mobile-play" type="button" aria-label="Play gameplay"><svg class="m-icon" viewBox="0 0 20 20" aria-hidden="true"><path class="m-icon--play" d="M5 2h2v2h3v2h3v2h3v4h-3v2h-3v2H7v2H5z"/><path class="m-icon--pause" d="M4 3h4v14H4zm8 0h4v14h-4z"/></svg><span id="mobile-play-label">Play</span></button>
+          </div>
+          <p class="m-film-status" id="mobile-film-status" role="status" aria-live="polite"></p>
+          <noscript><a class="m-nojs-film" href="mobile-film.mp4">Watch the opening</a></noscript>
+        </figure>
+
+        <section class="m-invitation" aria-labelledby="mobile-desktop-title">
+          <h2 id="mobile-desktop-title">Play on your computer.</h2>
+          <p>You'll need a physical keyboard.</p>
+          <div class="m-share-row"><button class="m-control m-link" id="mobile-share" type="button" aria-label="Share Keyboard Warrior"><svg class="m-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M9 1h2v2h2v2h2v2h-2V6h-2v7H9V6H7v1H5V5h2V3h2zM3 9h3v2H5v6h10v-6h-1V9h3v10H3z"/></svg><span>Share</span></button>
+          <p class="m-address">keyboardwarrior.app</p></div>
+          <p class="m-share-status" id="mobile-share-status" role="status" aria-live="polite"></p>
+          <div class="m-share-fallback" id="mobile-share-fallback" hidden><label for="mobile-url">Copy this link</label><input id="mobile-url" value="https://keyboardwarrior.app/" readonly /></div>
+          <div class="m-links"><a href="https://github.com/elicoggins/keyboardwarrior/releases/latest" target="_blank" rel="noopener noreferrer">Free download</a><a href="https://github.com/elicoggins/keyboardwarrior" target="_blank" rel="noopener noreferrer">GitHub</a></div>
+        </section>
+
+        <footer class="m-footer">
+          <details class="m-credits"><summary>about &amp; credits</summary><p>A rhythm typing game in Rust + macroquad, copying off the homework of Clone Hero and YARG.</p><p>Type the correct letters in time with the music. Come back with on a computer to try for yourself, and check out the free download to expand your song library.</p><p class="m-music-credit">“Code Monkey” by <a href="https://www.jonathancoulton.com">Jonathan Coulton</a>, used under <a href="https://creativecommons.org/licenses/by-nc/3.0/">CC BY-NC 3.0</a>.</p><p class="m-credit-links"><a href="MUSIC-ATTRIBUTION.md">Music credits</a> · <a href="LICENSE.md">License</a> · <a href="THIRD-PARTY-NOTICES.md">Third-party notices</a></p></details>
+          <p class="m-byline">made by Elijah Coggins</p>
+        </footer>
+      </div>
+      <script type="application/json" id="mobile-notes">{"song":"Code Monkey","artist":"Jonathan Coulton","difficulty":"Expert","fps":60,"songStart":0.016666666666666163,"events":[{"key":"t","time":3.033333,"until":3.033333},{"key":"o","time":3.216667,"until":3.216667},{"key":"m","time":3.4,"until":3.4},{"key":"a","time":3.6,"until":3.6},{"key":"t","time":3.783333,"until":3.783333},{"key":"o","time":3.983333,"until":3.983333},{"key":"w","time":4.166667,"until":4.166667},{"key":"i","time":4.35,"until":4.35},{"key":"l","time":4.55,"until":4.55},{"key":"l","time":4.733333,"until":4.733333},{"key":"o","time":4.933333,"until":4.933333},{"key":"w","time":5.116667,"until":5.116667},{"key":"i","time":5.3,"until":5.3},{"key":"n","time":5.5,"until":5.5},{"key":"d","time":5.683333,"until":5.683333},{"key":"i","time":5.883333,"until":5.883333},{"key":"g","time":6.066667,"until":6.066667},{"key":"o","time":6.25,"until":6.25},{"key":"s","time":6.433333,"until":6.433333},{"key":"y","time":6.616667,"until":6.616667},{"key":"m","time":6.816667,"until":6.816667},{"key":"b","time":7.0,"until":7.0},{"key":"o","time":7.183333,"until":7.183333},{"key":"l","time":7.366667,"until":7.366667},{"key":"i","time":7.55,"until":7.55},{"key":"c","time":7.75,"until":7.75},{"key":"o","time":7.933333,"until":7.933333},{"key":"v","time":8.116667,"until":8.116667},{"key":"e","time":8.3,"until":8.3},{"key":"r","time":8.483333,"until":8.483333},{"key":"c","time":8.683333,"until":8.683333},{"key":"o","time":8.866667,"until":8.866667},{"key":"m","time":9.05,"until":9.05},{"key":"e","time":9.233333,"until":9.233333},{"key":"m","time":9.433333,"until":9.433333},{"key":"e","time":9.616667,"until":9.616667},{"key":"a","time":9.8,"until":9.8},{"key":"s","time":9.983333,"until":9.983333},{"key":"u","time":10.183333,"until":10.183333},{"key":"r","time":10.366667,"until":10.366667},{"key":"e","time":10.55,"until":10.55},{"key":"d","time":10.733333,"until":10.733333},{"key":"o","time":10.933333,"until":10.933333},{"key":"r","time":11.116667,"until":11.116667},{"key":"g","time":11.3,"until":11.3},{"key":"a","time":11.483333,"until":11.483333},{"key":"n","time":11.683333,"until":11.683333},{"key":"i","time":11.866667,"until":11.866667},{"key":"z","time":12.05,"until":12.05},{"key":"e","time":12.233333,"until":12.233333},{"key":"p","time":12.433333,"until":12.433333},{"key":"a","time":12.616667,"until":12.616667},{"key":"r","time":12.816667,"until":12.816667},{"key":"a","time":13.0,"until":13.0},{"key":"l","time":13.183333,"until":13.183333},{"key":"l","time":13.383333,"until":13.383333},{"key":"e","time":13.566667,"until":13.566667},{"key":"l","time":13.75,"until":13.75},{"key":"a","time":13.933333,"until":13.933333},{"key":"d","time":14.116667,"until":14.116667},{"key":"d","time":14.3,"until":14.3},{"key":"r","time":14.483333,"until":14.483333},{"key":"e","time":14.666667,"until":14.666667},{"key":"s","time":14.85,"until":14.85},{"key":"s","time":15.016667,"until":15.016667},{"key":"u","time":15.583333,"until":15.583333},{"key":"n","time":15.766667,"until":15.766667},{"key":"i","time":16.333333,"until":16.333333},{"key":"t","time":16.516667,"until":16.516667},{"key":"o","time":18.016667,"until":18.016667},{"key":"u","time":18.583333,"until":18.583333},{"key":"t","time":18.766667,"until":18.766667},{"key":"u","time":19.333333,"until":19.333333},{"key":"p","time":19.533333,"until":19.533333},{"key":"f","time":20.083333,"until":20.083333},{"key":"l","time":20.283333,"until":20.283333},{"key":"u","time":20.466667,"until":20.466667},{"key":"t","time":20.65,"until":20.65},{"key":"e","time":21.033333,"until":21.033333},{"key":"p","time":21.583333,"until":21.583333},{"key":"l","time":21.783333,"until":21.783333},{"key":"u","time":22.333333,"until":22.333333},{"key":"s","time":22.516667,"until":22.516667}]}</script>
+    </main>
 
     <div class="stage" id="stage">
       <div class="screen" id="screen">
@@ -583,6 +666,7 @@
       </section>
 
       <footer class="foot">
+        <span class="foot__byline">made by Elijah Coggins</span>
         <a href="https://github.com/elicoggins/keyboardwarrior" target="_blank" rel="noopener noreferrer">github.com/elicoggins/keyboardwarrior</a>
       </footer>
     </main>
@@ -653,6 +737,7 @@
         const start = () => {
           if (started) return;
           started = true;
+          document.documentElement.dataset.experience = 'desktop';
           stage.dataset.mode = '';
           wire();
           boot();
@@ -830,5 +915,6 @@
         }
       })();
     </script>
+    <script src="mobile.js?v=5" defer></script>
   </body>
 </html>
