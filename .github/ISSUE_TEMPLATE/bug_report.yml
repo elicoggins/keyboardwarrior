@@ -5,9 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. The two things that make a bug fixable are the
-        version and the platform — everything else can usually be worked out
-        from those plus what you saw.
+        Include your game version, platform, and steps to reproduce the bug.
 
   - type: input
     id: version
@@ -54,8 +52,7 @@ body:
     attributes:
       label: Song
       description: >
-        If it only happens on one song, name it — and say whether it's a bundled
-        song or one you added, and where the chart came from.
+        Song name and chart source, if the bug only affects one song.
       placeholder: "Code Monkey (bundled)"
 
   - type: textarea
@@ -66,7 +63,7 @@ body:
         If the game crashed, paste `crash.log` from your settings folder —
         `~/Library/Application Support/keyboardwarrior/` on macOS,
         `~/.config/keyboardwarrior/` on Linux, `%APPDATA%\keyboardwarrior\` on
-        Windows. It's the only record of a crash that closed the window.
+        Windows.
       render: shell
 
   - type: textarea
@@ -74,5 +71,4 @@ body:
     attributes:
       label: Anything else
       description: >
-        Screenshots, or terminal output if you launched it from a terminal. Drag
-        images straight into this box.
+        Attach screenshots or terminal output here.

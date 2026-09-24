@@ -1,4 +1,3 @@
-/* The game's palette, ProggyClean type, keyboard legend and fullscreen control. */
 .mobile-landing { display: none; }
 html[data-experience="mobile"] .mobile-landing { display: block; }
 html[data-experience="mobile"] .stage,

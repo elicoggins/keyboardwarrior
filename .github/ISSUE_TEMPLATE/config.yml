@@ -1,13 +1,11 @@
-# Blank issues stay on: not every report fits a form, and a bug that's hard to
-# categorise is still worth hearing about.
 blank_issues_enabled: true
 contact_links:
   - name: Play the browser demo
-    url: https://elicoggins.github.io/keyboardwarrior/
-    about: Six songs, no download — worth trying before reporting a download problem.
+    url: https://keyboardwarrior.app/
+    about: Play six songs in your browser.
   - name: First launch is blocked by macOS or Windows
     url: https://github.com/elicoggins/keyboardwarrior#macos-first-launch
-    about: Expected — the game isn't code-signed. The README walks through it.
+    about: First-launch instructions for macOS and Windows.
   - name: Adding your own songs
-    url: https://github.com/elicoggins/keyboardwarrior#adding-your-own-songs
+    url: https://github.com/elicoggins/keyboardwarrior#adding-songs
     about: Where the songs folder lives and what chart formats work.

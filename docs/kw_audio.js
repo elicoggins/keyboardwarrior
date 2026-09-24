@@ -1,28 +1,11 @@
-// Browser-side support for the demo: its display-paced frame clock, followed
-// by the Web Audio backend. A ScriptProcessorNode pulls the game's own Rust
-// mixer (audio::Mixer, exported as kw_render) for every buffer, so the song,
-// guide and UI mix stays identical to native and the mixer's frame counter
-// remains the game clock. Latency-critical judgement samples use a direct
-// AudioBuffer path below; putting physical-key feedback through a queued
-// ScriptProcessor buffer would make the response arrive tens of ms late.
-//
-// Registered as a miniquad plugin so `kw_audio_start` exists as a wasm
-// import before the module is instantiated.
+// Browser clocks, storage, and audio imports for miniquad.
 "use strict";
 (function () {
-    // One durable JSON string under one localStorage key, exposed to Rust as
-    // the three imports a wasm string round-trip needs: ask the length, fill a
-    // buffer Rust has sized to it, and write one back.
-    //
-    // The demo keeps two of these — the settings blob and the score table.
-    // They're separate keys rather than one because they're written at
-    // completely different rates (a settings change is rare, a score lands at
-    // the end of every run) and because a parse failure in one must not cost
-    // the player the other.
+    // Separate settings and score stores so a corrupt save cannot affect both.
     function makeStore(key) {
-        // Survives for the page session when durable storage is unavailable.
+        // Session fallback when localStorage is unavailable.
         let fallback = null;
-        // The encoded bytes between a `load_len` and the `load` that takes them.
+        // Encoded bytes shared by load_len() and load().
         let pending = null;
 
         function read() {
@@ -30,9 +13,7 @@
                 const stored = window.localStorage.getItem(key);
                 if (stored !== null) fallback = stored;
             } catch (_) {
-                // Private browsing and embedded contexts can expose
-                // localStorage but throw on access. The in-memory copy still
-                // preserves everything for the rest of this page session.
+                // Storage access can fail in private or embedded contexts.
             }
             return fallback;
         }
@@ -56,7 +37,6 @@
                     window.localStorage.setItem(key, fallback);
                     return 1;
                 } catch (_) {
-                    // Keep the session fallback above when storage is denied.
                     return 0;
                 }
             },
@@ -66,12 +46,7 @@
     const settingsStore = makeStore("keyboardwarrior.settings.v1");
     const scoresStore = makeStore("keyboardwarrior.scores.v1");
 
-    // Chrome's last Mojave build has a long-standing high-DPI WebGL
-    // presentation bug: the canvas visibly judders even while rAF and Chrome's
-    // own frame counters remain at 60 Hz. On the affected ANGLE/OpenGL path,
-    // a bare-canvas reproduction becomes smooth when it draws its background
-    // instead of issuing glClear. Detect that narrow path here; current Mac
-    // Chrome uses ANGLE/Metal and other browsers retain their normal clear.
+    // Work around frame judder on legacy Mac Chromium with ANGLE/OpenGL.
     let avoidDefaultClear = false;
     function legacyMacChromiumOpenGL(context) {
         const ua = navigator.userAgent || "";
@@ -92,26 +67,15 @@
                 );
             }
         } catch (_) {
-            // Privacy settings may hide the unmasked renderer.
+            // Privacy settings may hide the renderer.
         }
         if (/\bMetal\b/i.test(renderer)) return false;
         if (/\bANGLE\b/i.test(renderer) && /\bOpenGL\b/i.test(renderer)) return true;
-        // Chrome 116 is the final Chrome available on Mojave and uses this
-        // legacy path. Only use the version fallback when no renderer was
-        // exposed; a known non-OpenGL backend must not be opted in.
+        // Use the Mojave version fallback only when the renderer is unknown.
         return !renderer && Number(version[1]) <= 116;
     }
 
-    // The game paints every pixel, so its WebGL surface is opaque even when it
-    // is embedded in a larger page. Miniquad asks for the browser defaults,
-    // which include alpha; Chrome must then blend each new canvas frame with
-    // everything underneath it. That distinction is invisible on the plain
-    // full-window demo, but expensive and scheduling-sensitive on the personal
-    // site, where the canvas sits over gradients and a masked paper texture.
-    // The browser default also enables multisample antialiasing, while the
-    // native miniquad configuration uses one sample. Match that native path
-    // and avoid resolving a full-size multisampled Retina framebuffer every
-    // frame. Depth behavior remains untouched.
+    // Match the native opaque, single-sample framebuffer.
     const gameCanvas = document.querySelector("#glcanvas");
     if (gameCanvas) {
         const getContext = gameCanvas.getContext.bind(gameCanvas);
@@ -129,11 +93,8 @@
         };
     }
 
-    // macroquad 0.4.16/miniquad 0.4.11 unconditionally begins every frame
-    // with one color-only clear before the app draws. Suppress exactly that
-    // first 0x4000 clear on the affected browser, then let every subsequent
-    // clear through. This preserves future render-target/depth clears and
-    // fails safely if the dependency ever changes the first clear's mask.
+    // Skip only miniquad's initial color clear on affected browsers.
+    // Preserve subsequent clears and other masks.
     const runGlClear = importObject.env.glClear;
     let suppressNextColorClear = false;
     importObject.env.glClear = function (mask) {
@@ -144,18 +105,7 @@
         return runGlClear(mask);
     };
 
-    // Miniquad throws away requestAnimationFrame's timestamp and implements
-    // its Rust-side clock with Date.now(). Chrome can deliver callbacks at
-    // uneven points inside otherwise evenly spaced display frames, especially
-    // on older Intel Macs; sampling the callback's arrival time then bakes the
-    // browser's scheduling noise into every animation position.
-    //
-    // Keep miniquad's clock monotonic, and while a frame is being drawn pin it
-    // to the animation timestamp Chrome supplied for that frame. This fixes
-    // the clock at the boundary rather than special-casing the song timeline:
-    // get_time(), get_frame_time(), UI motion, and gameplay all agree on the
-    // same display-paced instant. Code running outside rAF continues to see
-    // the live performance clock.
+    // Use the display timestamp during rAF and the live clock between frames.
     const clockEpoch = Number.isFinite(performance.timeOrigin)
         ? performance.timeOrigin
         : Date.now() - performance.now();
@@ -181,36 +131,19 @@
     let ctx = null;
     let node = null;
 
-    // Game clock support. The mixer's frame counter counts frames *rendered*,
-    // but a ScriptProcessorNode renders ahead of the speaker and, because its
-    // callback runs on the main thread, in bursts — and a callback that misses
-    // its deadline makes the node emit a period of silence, which pushes every
-    // later frame further into the future. So rendered frames run ahead of
-    // heard frames by an amount that jitters and grows.
-    //
-    // These two track the mapping. `rendered` is the same count the Rust side
-    // keeps; `anchorFrame` is heard at `anchorTime` on the context clock, taken
-    // from the callback's own playbackTime. From that, kw_audio_lag reports how
-    // many rendered frames have not reached the speaker yet, and Rust subtracts
-    // it to get a clock that follows the music instead of the renderer.
+    // Map rendered frames to their playback time to measure queued audio.
     let rendered = 0;
     let anchorFrame = 0;
     let anchorTime = 0;
 
-    // Whether the game wants sound right now. False only across a blocking
-    // decode (see kw_audio_suspend). Every path that could start the context
-    // goes through resumeIfWanted, so a keypress landing mid-decode can't
-    // restart it behind the decode's back.
+    // Track intent separately from async AudioContext state changes.
     let wantRunning = true;
 
     let hitSounds = [];
 
-    // Copy the embedded contact samples out of wasm exactly once. Keeping
-    // ready-to-play AudioBuffers avoids both decode work and oscillator setup
-    // on the keydown path, while sharing the native build's actual sounds.
+    // Prepare feedback samples once to keep decoding off the keydown path.
     function prepareHitSounds() {
-        // Default release builds omit the unfinished feedback-sounds feature
-        // and therefore do not export its embedded PCM bridge.
+        // The PCM bridge is absent when feedback sounds are disabled.
         if (typeof wasm_exports.kw_hit_pcm_rate !== "function") {
             hitSounds = [];
             return;
@@ -233,25 +166,10 @@
         });
     }
 
-    // Ask the browser to start (or restart) the context, if the game wants it.
-    //
-    // The condition is "not running", never "is suspended". A context created
-    // before any user gesture doesn't report "suspended" on WebKit — it reports
-    // "interrupted", a state no other engine has. Every resume here used to
-    // guard on "suspended", so on Safari not one of them ever fired: the
-    // context sat interrupted, the ScriptProcessorNode was never pulled, and
-    // because the game clock IS the mixer's frame counter (audio.rs), silence
-    // read as a stopped clock — the highway froze on READY and stayed there.
-    //
-    // "Not running" is true in every state that needs a resume, in every
-    // browser, including the interruptions WebKit raises long after startup
-    // (output device change, display sleep) that would otherwise kill the
-    // audio mid-song.
+    // Resume from suspended or WebKit's interrupted state.
     function resumeIfWanted() {
         if (!ctx || !wantRunning || ctx.state === "running") return;
-        // A refusal is normal — resume() outside a user gesture is denied, and
-        // the next keypress calls this again — so the rejection is swallowed
-        // rather than surfacing as an unhandled promise.
+        // Autoplay may reject this; the next gesture retries.
         const p = ctx.resume();
         if (p && p.catch) p.catch(function () {});
     }
@@ -259,20 +177,13 @@
     function kw_audio_start() {
         ctx = new (window.AudioContext || window.webkitAudioContext)();
         prepareHitSounds();
-        // 2048-frame pulls: ~43 ms at 48 kHz. Small enough that the game
-        // clock stays smooth, large enough that a main-thread callback
-        // doesn't underrun every time a frame runs long.
+        // 2048 frames balance latency and main-thread underruns (~43 ms at 48 kHz).
         node = ctx.createScriptProcessor(2048, 0, 2);
         node.onaudioprocess = function (e) {
-            // Pull counter, visible from the console for sync debugging
             window.__kw_pulls = (window.__kw_pulls || 0) + 1;
             const out = e.outputBuffer;
             const n = out.length;
-            // This buffer's first frame is heard at playbackTime. A buffer
-            // being filled now can't already have played, so anything at or
-            // behind the context clock is a browser that doesn't report it
-            // (older WebKit says 0) — fall back to "one buffer from now",
-            // which is what the spec's value amounts to.
+            // Older WebKit reports playbackTime as zero; estimate one buffer ahead.
             const pt =
                 e.playbackTime > ctx.currentTime
                     ? e.playbackTime
@@ -292,32 +203,16 @@
         };
         node.connect(ctx.destination);
 
-        // Autoplay policy: a context created before any user gesture doesn't
-        // start; the first key press or click is what's allowed to start it.
-        //
-        // The listeners stay registered for the whole session rather than
-        // removing themselves on the first event. A resume can be refused —
-        // and on WebKit the state it has to climb out of ("interrupted") can
-        // be re-entered at any time, when the output device changes or the
-        // display sleeps. One-shot listeners meant the demo got exactly one
-        // chance at sound and, if that chance failed, never got another.
+        // Keep gesture listeners active to recover from later interruptions.
         window.addEventListener("keydown", resumeIfWanted);
         window.addEventListener("pointerdown", resumeIfWanted);
         window.addEventListener("touchstart", resumeIfWanted);
-        // An interruption that arrives while the tab has focus needs no gesture
-        // to recover from, so don't make the player press a key to get the
-        // music back.
         ctx.addEventListener("statechange", resumeIfWanted);
 
         return ctx.sampleRate;
     }
 
-    // Frames rendered but not yet heard. The game clock is `rendered - lag`,
-    // which advances with the speaker: a burst of catch-up renders doesn't move
-    // it, and a dropout holds it still instead of teleporting it forward.
-    // Clamped because the extrapolation is only trustworthy for about as long
-    // as the buffering itself — a suspended context freezes both counts, so the
-    // lag simply holds, and the clock with it.
+    // Frames queued ahead of the speaker, clamped to four buffers.
     function kw_audio_lag() {
         if (!ctx || !node) return 0;
         const heard = anchorFrame + (ctx.currentTime - anchorTime) * ctx.sampleRate;
@@ -326,10 +221,7 @@
         return lag;
     }
 
-    // Physical-key feedback cannot wait behind the song mixer's 2048-frame
-    // pull (~43 ms at 48 kHz). Start a prepared sample directly on the
-    // AudioContext instead; the browser can then deliver it at its next render
-    // quantum, which is the earliest software can respond to the keypress.
+    // Play key feedback directly to bypass the 2048-frame song buffer.
     function kw_audio_hit(kind, volume) {
         if (!ctx || !Number.isFinite(volume) || volume <= 0) return;
         const buffer = hitSounds[kind];
@@ -343,17 +235,8 @@
         source.start(ctx.currentTime);
     }
 
-    // The wasm decode runs on this same (main) thread and blocks the event
-    // loop for hundreds of ms, so onaudioprocess can't fire and the pipeline
-    // underruns into clicks. The game suspends the context across a decode:
-    // suspend halts the rendering thread (its own thread, unblocked by the
-    // stalled main thread), so the gap is clean silence instead.
-    //
-    // The pair tracks intent in `wantRunning` rather than reading ctx.state,
-    // because state lags the call: suspend() and resume() are both async, and
-    // a resume that read a state the pending suspend hadn't reached yet would
-    // decline to fire and leave the context parked for good — a decode that
-    // silenced the rest of the session.
+    // Suspend during blocking WASM decoding to prevent underrun clicks.
+    // Use wantRunning because suspend/resume state changes are async.
     function kw_audio_suspend() {
         wantRunning = false;
         if (!ctx) return;
@@ -365,35 +248,21 @@
         resumeIfWanted();
     }
 
-    // Rust uses the same decision to replace its own background clear with an
-    // opaque full-screen quad. Together the two sides produce zero glClear
-    // calls; changing only one side would leave the reproducer's trigger.
+    // Rust also replaces its background clear with an opaque quad.
     function kw_webgl_avoid_default_clear() {
         return avoidDefaultClear ? 1 : 0;
     }
 
-    // Keep the demo's project-page hook in this required bridge: the public
-    // Pages wrapper owns its index.html, and a missing optional import would
-    // fail wasm instantiation. Rust supplies the URL so display and behavior
-    // cannot drift apart.
     function kw_open_url(ptr, len) {
         const url = new TextDecoder().decode(new Uint8Array(wasm_memory.buffer, ptr, len));
-        // The keypress that got here is a frame or two old, so the browser's
-        // transient user activation normally still stands and a tab opens.
-        // Blockers that disagree hand back null; navigating this tab is always
-        // allowed and beats the key doing nothing at all.
-        //
-        // Deliberately no "noopener" in the feature string: with it, open()
-        // returns null on SUCCESS as well as on failure, and the fallback below
-        // then fires every time — sending the demo tab to the same page it just
-        // opened in a new one. Severing .opener afterwards does the same job.
+        // Setting noopener in open() returns null even on success.
+        // Clear opener afterwards so null still identifies a blocked popup.
         const tab = window.open(url, "_blank");
         if (tab) tab.opener = null;
         else window.location.href = url;
     }
 
-    // Full song downloads belong to one Loading scene. Aborting removes the
-    // entry first so a late fetch completion cannot publish stale song bytes.
+    // Remove cancelled fetches before aborting to ignore late results.
     const songFetches = new Map();
     let nextSongFetch = 1;
     function kw_song_fetch_start(ptr, len) {

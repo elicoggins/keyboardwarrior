@@ -15,8 +15,6 @@ body:
     attributes:
       label: Why
       description: >
-        What are you trying to do that's awkward or impossible today? The
-        problem is usually more useful than a proposed solution — it leaves room
-        for a better one.
+        What would this help you do?
     validations:
       required: true

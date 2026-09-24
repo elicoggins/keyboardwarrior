@@ -15,7 +15,6 @@
   let visible = false;
   let hydrated = false;
   let playRequest = 0;
-  let heardOpening = false;
   const notes = JSON.parse($('mobile-notes').textContent).events;
   const keyboard = [...root.querySelectorAll('.m-key')].map(key => ({
     key,
@@ -28,8 +27,7 @@
   let frameCallback = null;
   const videoFrames = typeof video.requestVideoFrameCallback === 'function';
 
-  // Use presented video time, not timers. Seeking, buffering, pausing and
-  // looping keep the keyboard on the same frame as the recorded note hit.
+  // Keep key highlights aligned with the displayed video frame.
   function drawKeyboard(time) {
     for (const key of keyboard) {
       let lit = 0;
@@ -113,16 +111,10 @@
   });
   soundButton.addEventListener('click', () => {
     video.muted = !video.muted;
-    // Silent footage can repeat. An audible excerpt ends without cutting the song
-    // back to its beginning; the play control explicitly replays it.
+    // Loop only while muted.
     video.loop = video.muted;
-    // The first request for sound starts the opening from the beginning.
-    if (!video.muted && !heardOpening) {
-      heardOpening = true;
-      if (hydrated) video.currentTime = 0;
-    }
     reflect();
-    if (!video.muted) { userPaused = false; void play(); }
+    if (!video.muted && !video.ended) { userPaused = false; void play(); }
   });
   ['play', 'pause', 'volumechange', 'loadeddata'].forEach(name => video.addEventListener(name, reflect));
   video.addEventListener('play', followVideo);
@@ -165,13 +157,11 @@
     status.textContent = '';
     try {
       if (typeof navigator.share === 'function') {
-        // Call directly during the tap, before any await can consume the
-        // user activation Safari needs to open its native share sheet.
+        // Safari requires share() during the tap gesture.
         try { await navigator.share(shareData); return; }
         catch (error) {
           if (error.name === 'AbortError') return;
         }
-        // A failed native share can still copy the link; cancellation is final.
       }
       if (navigator.clipboard?.writeText) {
         try {
