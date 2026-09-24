@@ -66,6 +66,8 @@ Unzip the folder anywhere and run `keyboardwarrior.exe`. Keep the
 Windows Defender SmartScreen will show a blue **"Windows protected your PC"**
 box. Click **More info**, then **Run anyway**. Once again, only the first time.
 
+**Note:** If the game fails to recognize the bundled songs on first launch, it usually means you are running from inside the original ZIP. Extract first to fix.
+
 ### Linux
 
 Unpack anywhere and run `./keyboardwarrior`. You'll need ALSA available
