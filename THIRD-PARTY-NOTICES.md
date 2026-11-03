@@ -1,160 +1,267 @@
 # Third-party notices
 
-Keyboard Warrior is built on open-source libraries. The full dependency tree of
-the shipped native binary is listed below, with the license each crate is
-distributed under. Copyright remains with the respective authors.
+Keyboard Warrior is built on open-source libraries and includes bundled creative works.
+Copyright remains with the respective authors and contributors.
 
-## Mozilla Public License 2.0
+The Cargo table is the deterministic union of non-development dependency graphs for
+the locked Linux, both macOS architectures, Windows, and WebAssembly targets. It
+includes build dependencies because they participate in producing shipped artifacts.
 
-Two of the crates below (and their sub-crates) are licensed under the **MPL-2.0**, which requires
-that recipients of a binary be able to obtain the source of those components.
-They are used **unmodified**, and their complete source is available at:
+## Components needing additional notice
+
+### Mozilla Public License 2.0
+
+The `symphonia` family and `option-ext` are distributed under MPL-2.0. The
+copies used by Keyboard Warrior are unmodified. Their corresponding source is
+available from the upstream projects:
 
 | Component | Source |
 | --- | --- |
-| `symphonia` and its `symphonia-*` sub-crates (audio decoding) | https://github.com/pdeljanov/Symphonia |
-| `option-ext` (a dependency of `dirs`) | https://github.com/soc/option-ext |
+| `symphonia` and its `symphonia-*` crates | https://github.com/pdeljanov/Symphonia |
+| `option-ext` | https://github.com/soc/option-ext |
 
-A copy of the MPL-2.0 is available at https://mozilla.org/MPL/2.0/.
+The MPL-2.0 text is available at https://www.mozilla.org/MPL/2.0/.
 
-## macroquad
+### libopus
 
-macroquad is distributed under MIT OR Apache-2.0. Source:
-https://github.com/not-fl3/macroquad
+Native builds link libopus through the Rust `opus` and `opusic-sys` crates.
+libopus is copyright the Xiph.Org Foundation and contributors and is
+distributed under the 3-clause BSD license. Upstream source is available at
+https://github.com/xiph/opus.
 
-## libopus
+### macroquad browser support
 
-The `.opus` decoder links **libopus**, © the Xiph.Org Foundation and
-contributors, distributed under the 3-clause BSD license. Source:
-https://github.com/xiph/opus
+The macroquad Rust crate is used without source changes and is distributed
+under MIT OR Apache-2.0. Upstream source is available at
+https://github.com/not-fl3/macroquad.
 
-## Full dependency list
+`web/mq_js_bundle.js` is derived from `js/mq_js_bundle.js` in macroquad 0.4.16
+with local corrections for quad-net's strict-mode declaration and browser
+keyboard input. Apostrophe/slash physical codes match miniquad's protocol;
+characters forwarded while preventing browser shortcuts retain the OS layout.
+`scripts/check_vendored_assets.py` verifies the locked crate checksum, upstream
+file hash, exact patches, and committed output.
 
-| Crate | Version | License | Platforms |
+### ProggyClean
+
+The committed `assets/ProggyClean.ttf` is byte-for-byte identical to
+`src/ProggyClean.ttf` in the locked macroquad 0.4.16 crate. Its SHA-256 is
+`527d2a443ce051f93f7e77b855609722b8cb220a9f104b4aa037be5c90b71324`.
+macroquad distributes that crate under MIT OR Apache-2.0 and identifies the
+font as ProggyClean by Tristan Grimmer (https://proggyfonts.net).
+`assets/font.png` is a raster atlas derived from that file by
+`examples/make_font.rs`.
+
+### Kenney Interface Sounds
+
+The PERFECT, GREAT, and GOOD judgement samples and chart-guide tick are adapted
+from `pluck_001`, `select_001`, `click_001`, and `tick_001` in Kenney's
+Interface Sounds 1.0 pack. Kenney released the pack under Creative Commons Zero
+1.0 (CC0). The source pack is available at
+https://kenney.nl/assets/interface-sounds and its CC0 dedication is at
+https://creativecommons.org/publicdomain/zero/1.0/.
+
+### Recorded keyboard sounds
+
+Menu typing uses five keystroke recordings from **vintage keyboard** by
+**jim-ph**, released under Creative Commons Zero 1.0 (CC0):
+https://freesound.org/people/jim-ph/packs/12363/.
+Freesound sound IDs 194795–194799 were obtained as public high-quality MP3
+previews, trimmed, level-matched, and converted to PCM. Source URLs and hashes
+are retained in `assets/sfx/typing/sources.json`. The CC0 dedication is at
+https://creativecommons.org/publicdomain/zero/1.0/.
+
+Confirmations use **enter key** by **uEffects**, Freesound sound ID 180997,
+also released under CC0: https://freesound.org/people/uEffects/sounds/180997/.
+Its public high-quality MP3 preview was trimmed, level-matched, and converted
+to PCM; the source and checksum are retained with the other keyboard recordings.
+
+## Bundled music and charts
+
+Keyboard Warrior ships with the songs below. Each is listed with the licence its
+rightsholder publishes it under and the charter credited with its chart.
+
+| Song | Artist | Music licence | Chart credit |
 | --- | --- | --- | --- |
-| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | all |
-| allocator-api2 | 0.2.21 | MIT OR Apache-2.0 | all |
-| alsa | 0.9.1 | Apache-2.0/MIT | Linux |
-| alsa-sys | 0.3.1 | MIT | Linux |
-| arrayvec | 0.7.8 | MIT OR Apache-2.0 | all |
-| audiopus_sys | 0.2.2 | ISC | all |
-| base64 | 0.22.1 | MIT OR Apache-2.0 | all |
-| bitflags | 1.3.2 | MIT/Apache-2.0 | all |
-| bitflags | 2.13.1 | MIT OR Apache-2.0 | Linux |
-| bytemuck | 1.25.1 | Zlib OR Apache-2.0 OR MIT | all |
-| byteorder | 1.5.0 | Unlicense OR MIT | all |
-| cfg-if | 1.0.4 | MIT OR Apache-2.0 | all |
-| color_quant | 1.1.0 | MIT | all |
-| core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | macOS |
-| coreaudio-rs | 0.11.3 | MIT/Apache-2.0 | macOS |
-| coreaudio-sys | 0.2.18 | MIT | macOS |
-| cpal | 0.15.3 | Apache-2.0 | all |
-| crc32fast | 1.5.0 | MIT OR Apache-2.0 | all |
-| crossbeam-deque | 0.8.7 | MIT OR Apache-2.0 | all |
-| crossbeam-epoch | 0.9.20 | MIT OR Apache-2.0 | all |
-| crossbeam-utils | 0.8.22 | MIT OR Apache-2.0 | all |
-| dasp_sample | 0.11.0 | MIT OR Apache-2.0 | all |
-| dirs | 5.0.1 | MIT OR Apache-2.0 | all |
-| dirs-sys | 0.4.1 | MIT OR Apache-2.0 | all |
-| displaydoc | 0.2.6 | MIT OR Apache-2.0 | all |
-| either | 1.16.0 | MIT OR Apache-2.0 | all |
-| encoding_rs | 0.8.35 | (Apache-2.0 OR MIT) AND BSD-3-Clause | all |
-| equivalent | 1.0.2 | Apache-2.0 OR MIT | all |
-| extended | 0.1.0 | MIT | all |
-| fdeflate | 0.3.7 | MIT OR Apache-2.0 | all |
-| flate2 | 1.1.9 | MIT OR Apache-2.0 | all |
-| foldhash | 0.1.5 | Zlib | all |
-| fontdue | 0.9.3 | MIT OR Apache-2.0 OR Zlib | all |
-| form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | all |
-| getrandom | 0.2.17 | MIT OR Apache-2.0 | all |
-| glam | 0.27.0 | MIT OR Apache-2.0 | all |
-| hashbrown | 0.15.5 | MIT OR Apache-2.0 | all |
-| icu_collections | 2.2.0 | Unicode-3.0 | all |
-| icu_locale_core | 2.2.0 | Unicode-3.0 | all |
-| icu_normalizer | 2.2.0 | Unicode-3.0 | all |
-| icu_normalizer_data | 2.2.0 | Unicode-3.0 | all |
-| icu_properties | 2.2.0 | Unicode-3.0 | all |
-| icu_properties_data | 2.2.0 | Unicode-3.0 | all |
-| icu_provider | 2.2.0 | Unicode-3.0 | all |
-| idna | 1.1.0 | MIT OR Apache-2.0 | all |
-| idna_adapter | 1.2.2 | Apache-2.0 OR MIT | all |
-| image | 0.24.9 | MIT OR Apache-2.0 | all |
-| itoa | 1.0.18 | MIT OR Apache-2.0 | all |
-| lazy_static | 1.5.0 | MIT OR Apache-2.0 | all |
-| libc | 0.2.186 | MIT OR Apache-2.0 | macOS, Linux |
-| litemap | 0.8.2 | Unicode-3.0 | all |
-| log | 0.4.33 | MIT OR Apache-2.0 | all |
-| mach2 | 0.4.3 | BSD-2-Clause OR MIT OR Apache-2.0 | macOS |
-| macroquad | 0.4.16 | MIT OR Apache-2.0 | all |
-| macroquad_macro | 0.1.8 | MIT/Apache-2.0 | all |
+| Code Monkey | Jonathan Coulton | CC BY-NC 3.0 | NoisyPuppet |
+| Creepy Doll | Jonathan Coulton | CC BY-NC 3.0 | RockGamer |
+| Re: Your Brains | Jonathan Coulton | CC BY-NC 3.0 | Harmonix |
+| Dirtbag | Brad Sucks | CC BY-SA 3.0 | JRabes |
+| Certain Death | Brad Sucks | CC BY-SA 3.0 | MB1Nightmare & Greninjo |
+| There's Something Wrong | Brad Sucks | CC BY-SA 3.0 | MB1Nightmare & Greninjo |
+
+### Packaging transformations
+
+- Native: At package time, non-lead Opus stems are summed and re-encoded as one Opus backing track; lead stems and chart bytes are retained separately.
+- Web: For the browser, Opus audio is decoded, non-lead stems are summed, the combined mix is scaled when needed, and backing/lead audio is re-encoded as Vorbis with restoration gain recorded in metadata; chart bytes are copied into full and chart-only containers.
+
+## Cargo dependency union
+
+| Crate | Version | License expression | Target graphs |
+| --- | --- | --- | --- |
+| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| aho-corasick | 1.1.5 | Unlicense OR MIT | Linux, macOS, Windows, WebAssembly |
+| allocator-api2 | 0.2.21 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| alsa | 0.11.0 | Apache-2.0/MIT | Linux |
+| alsa-sys | 0.4.0 | MIT | Linux |
+| arrayvec | 0.7.8 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| autocfg | 1.5.1 | Apache-2.0 OR MIT | Linux, macOS, Windows, WebAssembly |
+| base64 | 0.22.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| bitflags | 1.3.2 | MIT/Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| bitflags | 2.13.1 | MIT OR Apache-2.0 | Linux, macOS |
+| block-buffer | 0.10.4 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| block2 | 0.6.2 | MIT | macOS |
+| bytemuck | 1.25.1 | Zlib OR Apache-2.0 OR MIT | Linux, macOS, Windows, WebAssembly |
+| byteorder | 1.5.0 | Unlicense OR MIT | Linux, macOS, Windows, WebAssembly |
+| cc | 1.2.67 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| cfg-if | 1.0.4 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| cmake | 0.1.58 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| color_quant | 1.1.0 | MIT | Linux, macOS, Windows, WebAssembly |
+| coreaudio-rs | 0.14.2 | MIT/Apache-2.0 | macOS |
+| cpal | 0.18.2 | Apache-2.0 | Linux, macOS, Windows |
+| cpufeatures | 0.2.17 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| crc32fast | 1.5.0 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| crossbeam-deque | 0.8.7 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| crossbeam-epoch | 0.9.20 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| crossbeam-utils | 0.8.22 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| crypto-common | 0.1.7 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| dasp_sample | 0.11.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| digest | 0.10.7 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| dirs | 5.0.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| dirs-sys | 0.4.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| dispatch2 | 0.3.1 | Zlib OR Apache-2.0 OR MIT | macOS |
+| displaydoc | 0.2.6 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| either | 1.16.0 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| encoding_rs | 0.8.35 | (Apache-2.0 OR MIT) AND BSD-3-Clause | Linux, macOS, Windows, WebAssembly |
+| equivalent | 1.0.2 | Apache-2.0 OR MIT | Linux, macOS, Windows, WebAssembly |
+| extended | 0.1.0 | MIT | Linux, macOS, Windows, WebAssembly |
+| fdeflate | 0.3.7 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| find-msvc-tools | 0.1.9 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| flate2 | 1.1.9 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| foldhash | 0.1.5 | Zlib | Linux, macOS, Windows, WebAssembly |
+| fontdue | 0.9.3 | MIT OR Apache-2.0 OR Zlib | Linux, macOS, Windows, WebAssembly |
+| form_urlencoded | 1.2.2 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| generic-array | 0.14.7 | MIT | Linux, macOS, Windows |
+| getrandom | 0.2.17 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| glam | 0.27.0 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| hashbrown | 0.15.5 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| hashbrown | 0.17.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| icu_collections | 2.2.0 | Unicode-3.0 | Linux, macOS, Windows |
+| icu_locale_core | 2.2.0 | Unicode-3.0 | Linux, macOS, Windows |
+| icu_normalizer | 2.2.0 | Unicode-3.0 | Linux, macOS, Windows |
+| icu_normalizer_data | 2.2.0 | Unicode-3.0 | Linux, macOS, Windows |
+| icu_properties | 2.2.0 | Unicode-3.0 | Linux, macOS, Windows |
+| icu_properties_data | 2.2.0 | Unicode-3.0 | Linux, macOS, Windows |
+| icu_provider | 2.2.0 | Unicode-3.0 | Linux, macOS, Windows |
+| idna | 1.1.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| idna_adapter | 1.2.2 | Apache-2.0 OR MIT | Linux, macOS, Windows |
+| image | 0.24.9 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| indexmap | 2.14.0 | Apache-2.0 OR MIT | Linux, macOS, Windows |
+| itoa | 1.0.18 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| lazy_static | 1.5.0 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| libc | 0.2.186 | MIT OR Apache-2.0 | Linux, macOS |
+| litemap | 0.8.2 | Unicode-3.0 | Linux, macOS, Windows |
+| log | 0.4.33 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| mach2 | 0.6.0 | BSD-2-Clause OR MIT OR Apache-2.0 | macOS |
+| macroquad | 0.4.16 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| macroquad_macro | 0.1.8 | MIT/Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | malloc_buf | 0.0.6 | MIT | macOS |
-| memchr | 2.8.3 | Unlicense OR MIT | all |
-| midly | 0.5.3 | Unlicense | all |
-| miniquad | 0.4.11 | MIT OR Apache-2.0 | all |
-| miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | all |
-| num-traits | 0.2.19 | MIT OR Apache-2.0 | all |
+| memchr | 2.8.3 | Unlicense OR MIT | Linux, macOS, Windows, WebAssembly |
+| midly | 0.5.3 | Unlicense | Linux, macOS, Windows, WebAssembly |
+| miniquad | 0.4.11 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| num-traits | 0.2.19 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | objc-rs | 0.2.8 | MIT | macOS |
-| ogg | 0.9.2 | BSD-3-Clause | all |
-| once_cell | 1.21.4 | MIT OR Apache-2.0 | all |
-| option-ext | 0.2.0 | MPL-2.0 | all |
-| opus | 0.3.1 | MIT/Apache-2.0 | all |
-| percent-encoding | 2.3.2 | MIT OR Apache-2.0 | all |
-| png | 0.17.16 | MIT OR Apache-2.0 | all |
-| potential_utf | 0.1.5 | Unicode-3.0 | all |
-| proc-macro2 | 1.0.106 | MIT OR Apache-2.0 | all |
-| quad-rand | 0.2.3 | MIT | all |
-| quote | 1.0.46 | MIT OR Apache-2.0 | all |
-| rayon | 1.12.0 | MIT OR Apache-2.0 | all |
-| rayon-core | 1.13.0 | MIT OR Apache-2.0 | all |
-| ring | 0.17.14 | Apache-2.0 AND ISC | all |
-| rustls | 0.23.42 | Apache-2.0 OR ISC OR MIT | all |
-| rustls-pki-types | 1.15.0 | MIT OR Apache-2.0 | all |
-| rustls-webpki | 0.103.13 | ISC | all |
-| serde | 1.0.228 | MIT OR Apache-2.0 | all |
-| serde_core | 1.0.228 | MIT OR Apache-2.0 | all |
-| serde_derive | 1.0.228 | MIT OR Apache-2.0 | all |
-| serde_json | 1.0.150 | MIT OR Apache-2.0 | all |
-| simd-adler32 | 0.3.10 | MIT | all |
-| smallvec | 1.15.2 | MIT OR Apache-2.0 | all |
-| stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | all |
-| subtle | 2.6.1 | BSD-3-Clause | all |
-| symphonia | 0.5.5 | MPL-2.0 | all |
-| symphonia-bundle-flac | 0.5.5 | MPL-2.0 | all |
-| symphonia-bundle-mp3 | 0.5.5 | MPL-2.0 | all |
-| symphonia-codec-pcm | 0.5.5 | MPL-2.0 | all |
-| symphonia-codec-vorbis | 0.5.5 | MPL-2.0 | all |
-| symphonia-core | 0.5.5 | MPL-2.0 | all |
-| symphonia-format-ogg | 0.5.5 | MPL-2.0 | all |
-| symphonia-format-riff | 0.5.5 | MPL-2.0 | all |
-| symphonia-metadata | 0.5.5 | MPL-2.0 | all |
-| symphonia-utils-xiph | 0.5.5 | MPL-2.0 | all |
-| syn | 2.0.119 | MIT OR Apache-2.0 | all |
-| synstructure | 0.13.2 | MIT | all |
-| tinystr | 0.8.3 | Unicode-3.0 | all |
-| ttf-parser | 0.21.1 | MIT OR Apache-2.0 | all |
-| unicode-ident | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | all |
-| untrusted | 0.9.0 | ISC | all |
-| ureq | 2.12.1 | MIT OR Apache-2.0 | all |
-| url | 2.5.8 | MIT OR Apache-2.0 | all |
-| utf8_iter | 1.0.4 | Apache-2.0 OR MIT | all |
-| webpki-roots | 0.26.11 | CDLA-Permissive-2.0 | all |
-| webpki-roots | 1.0.9 | CDLA-Permissive-2.0 | all |
+| objc2 | 0.6.4 | MIT | macOS |
+| objc2-audio-toolbox | 0.3.2 | Zlib OR Apache-2.0 OR MIT | macOS |
+| objc2-core-audio | 0.3.2 | Zlib OR Apache-2.0 OR MIT | macOS |
+| objc2-core-audio-types | 0.3.2 | Zlib OR Apache-2.0 OR MIT | macOS |
+| objc2-core-foundation | 0.3.2 | Zlib OR Apache-2.0 OR MIT | macOS |
+| objc2-encode | 4.1.0 | MIT | macOS |
+| objc2-foundation | 0.3.2 | MIT | macOS |
+| ogg | 0.9.2 | BSD-3-Clause | Linux, macOS, Windows |
+| once_cell | 1.21.4 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| option-ext | 0.2.0 | MPL-2.0 | Linux, macOS, Windows |
+| opus | 0.4.0 | MIT/Apache-2.0 | Linux, macOS, Windows |
+| opusic-sys | 0.7.5 | BSD-3-Clause | Linux, macOS, Windows |
+| percent-encoding | 2.3.2 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| pkg-config | 0.3.33 | MIT OR Apache-2.0 | Linux |
+| png | 0.17.16 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| potential_utf | 0.1.5 | Unicode-3.0 | Linux, macOS, Windows |
+| proc-macro2 | 1.0.106 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| quad-rand | 0.2.3 | MIT | Linux, macOS, Windows, WebAssembly |
+| quote | 1.0.46 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| rayon | 1.12.0 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| rayon-core | 1.13.0 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| regex | 1.13.1 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| regex-automata | 0.4.18 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| regex-syntax | 0.8.11 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| ring | 0.17.14 | Apache-2.0 AND ISC | Linux, macOS, Windows |
+| rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | Linux, macOS, Windows |
+| rustls-pki-types | 1.15.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| rustls-webpki | 0.103.16 | ISC | Linux, macOS, Windows |
+| serde | 1.0.228 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| serde_core | 1.0.228 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| serde_derive | 1.0.228 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| serde_json | 1.0.150 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| serde_spanned | 1.1.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| sha2 | 0.10.9 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| shlex | 2.0.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| simd-adler32 | 0.3.10 | MIT | Linux, macOS, Windows, WebAssembly |
+| smallvec | 1.15.2 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| subtle | 2.6.1 | BSD-3-Clause | Linux, macOS, Windows |
+| symphonia | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| symphonia-bundle-flac | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| symphonia-bundle-mp3 | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| symphonia-codec-pcm | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| symphonia-codec-vorbis | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| symphonia-core | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| symphonia-format-ogg | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| symphonia-format-riff | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| symphonia-metadata | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| symphonia-utils-xiph | 0.5.5 | MPL-2.0 | Linux, macOS, Windows, WebAssembly |
+| syn | 2.0.119 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| synstructure | 0.13.2 | MIT | Linux, macOS, Windows |
+| tinystr | 0.8.3 | Unicode-3.0 | Linux, macOS, Windows |
+| toml | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| toml_datetime | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| toml_parser | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| toml_writer | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| ttf-parser | 0.21.1 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
+| typenum | 1.20.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| unicode-ident | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | Linux, macOS, Windows, WebAssembly |
+| untrusted | 0.9.0 | ISC | Linux, macOS, Windows |
+| ureq | 2.12.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| url | 2.5.8 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| utf8_iter | 1.0.4 | Apache-2.0 OR MIT | Linux, macOS, Windows |
+| version_check | 0.9.5 | MIT/Apache-2.0 | Linux, macOS, Windows |
+| webpki-roots | 0.26.11 | CDLA-Permissive-2.0 | Linux, macOS, Windows |
+| webpki-roots | 1.0.10 | CDLA-Permissive-2.0 | Linux, macOS, Windows |
 | winapi | 0.3.9 | MIT/Apache-2.0 | Windows |
-| windows | 0.54.0 | MIT OR Apache-2.0 | Windows |
-| windows-core | 0.54.0 | MIT OR Apache-2.0 | Windows |
-| windows-result | 0.1.2 | MIT OR Apache-2.0 | Windows |
+| windows | 0.62.2 | MIT OR Apache-2.0 | Windows |
+| windows-collections | 0.3.2 | MIT OR Apache-2.0 | Windows |
+| windows-core | 0.62.2 | MIT OR Apache-2.0 | Windows |
+| windows-future | 0.3.2 | MIT OR Apache-2.0 | Windows |
+| windows-implement | 0.60.2 | MIT OR Apache-2.0 | Windows |
+| windows-interface | 0.59.3 | MIT OR Apache-2.0 | Windows |
+| windows-link | 0.2.1 | MIT OR Apache-2.0 | Windows |
+| windows-numerics | 0.3.1 | MIT OR Apache-2.0 | Windows |
+| windows-result | 0.4.1 | MIT OR Apache-2.0 | Windows |
+| windows-strings | 0.5.1 | MIT OR Apache-2.0 | Windows |
 | windows-sys | 0.48.0 | MIT OR Apache-2.0 | Windows |
 | windows-targets | 0.48.5 | MIT OR Apache-2.0 | Windows |
-| windows-targets | 0.52.6 | MIT OR Apache-2.0 | Windows |
+| windows-threading | 0.2.1 | MIT OR Apache-2.0 | Windows |
 | windows_x86_64_msvc | 0.48.5 | MIT OR Apache-2.0 | Windows |
-| windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | Windows |
-| writeable | 0.6.3 | Unicode-3.0 | all |
-| yoke | 0.8.3 | Unicode-3.0 | all |
-| yoke-derive | 0.8.2 | Unicode-3.0 | all |
-| zerofrom | 0.1.8 | Unicode-3.0 | all |
-| zerofrom-derive | 0.1.7 | Unicode-3.0 | all |
-| zeroize | 1.9.0 | Apache-2.0 OR MIT | all |
-| zerotrie | 0.2.4 | Unicode-3.0 | all |
-| zerovec | 0.11.6 | Unicode-3.0 | all |
-| zerovec-derive | 0.11.3 | Unicode-3.0 | all |
-| zmij | 1.0.23 | MIT | all |
+| winnow | 1.0.4 | MIT | Linux, macOS, Windows |
+| winresource | 0.1.31 | MIT | Windows |
+| writeable | 0.6.3 | Unicode-3.0 | Linux, macOS, Windows |
+| yoke | 0.8.3 | Unicode-3.0 | Linux, macOS, Windows |
+| yoke-derive | 0.8.2 | Unicode-3.0 | Linux, macOS, Windows |
+| zerofrom | 0.1.8 | Unicode-3.0 | Linux, macOS, Windows |
+| zerofrom-derive | 0.1.7 | Unicode-3.0 | Linux, macOS, Windows |
+| zeroize | 1.9.0 | Apache-2.0 OR MIT | Linux, macOS, Windows |
+| zerotrie | 0.2.4 | Unicode-3.0 | Linux, macOS, Windows |
+| zerovec | 0.11.6 | Unicode-3.0 | Linux, macOS, Windows |
+| zerovec-derive | 0.11.3 | Unicode-3.0 | Linux, macOS, Windows |
+| zmij | 1.0.23 | MIT | Linux, macOS, Windows, WebAssembly |

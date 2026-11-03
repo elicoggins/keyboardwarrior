@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.1 — Unreleased
+
+- Custom word dictionaries on desktop
+- Lane color customization in Options → CUSTOMIZE
+- Expanded the word pool
+- Bugfix for Linux audio startup
+- Improved browser audio timing
+- General library updates
+
 ## 2.0.0 — 2026-09-18
 
 - Highway settings now have a full-screen editor: lane width, center gap,
