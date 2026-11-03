@@ -2,17 +2,12 @@
 
 ## 2.0.1 — Unreleased
 
-- Added custom word dictionaries on desktop. Add your words to the standard
-  list, or replace it with a list containing at least 500 unique playable words
-  and enough variety at every word length. Supported Latin-1 accents retain
-  their spelling. Custom and standard dictionaries share personal bests.
-- Added individual lane colors, with a keyboard-operated color wheel and hex
-  editing in Options → CUSTOMIZE.
-- Expanded the standard dictionary with familiar, clean words.
-- Improved Linux audio startup, buffer handling and recovery after an output
-  device fails or changes.
-- Improved browser audio timing and asset-cache updates.
-- Updated the native HTTPS libraries and bundled certificate roots.
+- Custom word dictionaries on desktop
+- Lane color customization in Options → CUSTOMIZE
+- Expanded the word pool
+- Bugfix for Linux audio startup
+- Improved browser audio timing
+- General library updates
 
 ## 2.0.0 — 2026-09-18
 

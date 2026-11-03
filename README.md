@@ -109,24 +109,14 @@ Cancelling the subsequent scan does not undo a completed deletion.
 
 ## Custom word dictionaries
 
-Desktop builds let you use your own words in **WORDS** and **WORDS (FIXED)**.
+Customize the words selected by the game.
 Open **O → CUSTOMIZE**, select **Dictionary**, and press **F2** to open the
 word-list folder. The game creates an editable `my-words.txt` example when it
 first creates that folder. You can edit it or add another UTF-8 `.txt` file.
 
 Use one word per line, with **1–8 letters** per word. Latin-1 accents such as
-`café`, `élève` and `naïve` are supported; type accented letters as shown.
-Uppercase words are converted to lowercase, duplicates are removed, and `#`
-starts a comment. Unsupported characters and longer words are skipped.
-
-```text
-# A few words to add
-café
-élève
-jardin
-soleil
-bonjour
-```
+`café`, `élève` and `naïve` are supported.
+Uppercase words are converted to lowercase and duplicates are removed. Unsupported characters and longer words are skipped.
 
 Back in the game, press **F5** on **Dictionary** to reload, then use
 **LEFT / RIGHT** to select your file. **Word usage** chooses:
@@ -135,13 +125,6 @@ Back in the game, press **F5** on **Dictionary** to reload, then use
 - **Replace:** use only your file. This needs at least **500 unique playable
   words**, including 2 one-letter words, 10 two-letter words, 25 three-letter
   words, and 50 words at each length from four through eight letters.
-
-Explicit words are filtered out of gameplay without rejecting the file. Only
-usable words count toward replacement requirements. Standard words, Add and
-Replace share personal bests within each text mode.
-
-Word lists stay in your player-data folder across game updates. These controls
-are keyboard-only; the browser demo uses the standard dictionary.
 
 ## Bundled music
 
