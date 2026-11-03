@@ -109,7 +109,7 @@ Cancelling the subsequent scan does not undo a completed deletion.
 
 ## Custom word dictionaries
 
-Customize the words selected by the game.
+Customize the words selected by the desktop game.
 Open **O → CUSTOMIZE**, select **Dictionary**, and press **F2** to open the
 word-list folder. The game creates an editable `my-words.txt` example when it
 first creates that folder. You can edit it or add another UTF-8 `.txt` file.

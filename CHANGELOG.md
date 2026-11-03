@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.1 — Unreleased
+## 2.0.1 — 2026-11-03
 
 - Custom word dictionaries on desktop
 - Lane color customization in Options → CUSTOMIZE
