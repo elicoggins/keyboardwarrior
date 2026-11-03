@@ -24,7 +24,7 @@ The MPL-2.0 text is available at https://www.mozilla.org/MPL/2.0/.
 
 ### libopus
 
-Native builds link libopus through the Rust `opus` and `audiopus_sys` crates.
+Native builds link libopus through the Rust `opus` and `opusic-sys` crates.
 libopus is copyright the Xiph.Org Foundation and contributors and is
 distributed under the 3-clause BSD license. Upstream source is available at
 https://github.com/xiph/opus.
@@ -105,7 +105,6 @@ rightsholder publishes it under and the charter credited with its chart.
 | alsa | 0.11.0 | Apache-2.0/MIT | Linux |
 | alsa-sys | 0.4.0 | MIT | Linux |
 | arrayvec | 0.7.8 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
-| audiopus_sys | 0.2.2 | ISC | Linux, macOS, Windows |
 | autocfg | 1.5.1 | Apache-2.0 OR MIT | Linux, macOS, Windows, WebAssembly |
 | base64 | 0.22.1 | MIT OR Apache-2.0 | Linux, macOS, Windows |
 | bitflags | 1.3.2 | MIT/Apache-2.0 | Linux, macOS, Windows, WebAssembly |
@@ -119,7 +118,7 @@ rightsholder publishes it under and the charter credited with its chart.
 | cmake | 0.1.58 | MIT OR Apache-2.0 | Linux, macOS, Windows |
 | color_quant | 1.1.0 | MIT | Linux, macOS, Windows, WebAssembly |
 | coreaudio-rs | 0.14.2 | MIT/Apache-2.0 | macOS |
-| cpal | 0.17.3 | Apache-2.0 | Linux, macOS, Windows |
+| cpal | 0.18.2 | Apache-2.0 | Linux, macOS, Windows |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | Linux, macOS, Windows |
 | crc32fast | 1.5.0 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | crossbeam-deque | 0.8.7 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
@@ -163,7 +162,7 @@ rightsholder publishes it under and the charter credited with its chart.
 | libc | 0.2.186 | MIT OR Apache-2.0 | Linux, macOS |
 | litemap | 0.8.2 | Unicode-3.0 | Linux, macOS, Windows |
 | log | 0.4.33 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
-| mach2 | 0.5.0 | BSD-2-Clause OR MIT OR Apache-2.0 | macOS |
+| mach2 | 0.6.0 | BSD-2-Clause OR MIT OR Apache-2.0 | macOS |
 | macroquad | 0.4.16 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | macroquad_macro | 0.1.8 | MIT/Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | malloc_buf | 0.0.6 | MIT | macOS |
@@ -183,9 +182,10 @@ rightsholder publishes it under and the charter credited with its chart.
 | ogg | 0.9.2 | BSD-3-Clause | Linux, macOS, Windows |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | Linux, macOS, Windows |
 | option-ext | 0.2.0 | MPL-2.0 | Linux, macOS, Windows |
-| opus | 0.3.1 | MIT/Apache-2.0 | Linux, macOS, Windows |
+| opus | 0.4.0 | MIT/Apache-2.0 | Linux, macOS, Windows |
+| opusic-sys | 0.7.5 | BSD-3-Clause | Linux, macOS, Windows |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | Linux, macOS, Windows |
-| pkg-config | 0.3.33 | MIT OR Apache-2.0 | Linux, macOS, Windows |
+| pkg-config | 0.3.33 | MIT OR Apache-2.0 | Linux |
 | png | 0.17.16 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | potential_utf | 0.1.5 | Unicode-3.0 | Linux, macOS, Windows |
 | proc-macro2 | 1.0.106 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
@@ -197,9 +197,9 @@ rightsholder publishes it under and the charter credited with its chart.
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | ring | 0.17.14 | Apache-2.0 AND ISC | Linux, macOS, Windows |
-| rustls | 0.23.45 | Apache-2.0 OR ISC OR MIT | Linux, macOS, Windows |
+| rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | Linux, macOS, Windows |
 | rustls-pki-types | 1.15.0 | MIT OR Apache-2.0 | Linux, macOS, Windows |
-| rustls-webpki | 0.103.15 | ISC | Linux, macOS, Windows |
+| rustls-webpki | 0.103.16 | ISC | Linux, macOS, Windows |
 | serde | 1.0.228 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | serde_core | 1.0.228 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
 | serde_derive | 1.0.228 | MIT OR Apache-2.0 | Linux, macOS, Windows, WebAssembly |
@@ -237,7 +237,7 @@ rightsholder publishes it under and the charter credited with its chart.
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | Linux, macOS, Windows |
 | version_check | 0.9.5 | MIT/Apache-2.0 | Linux, macOS, Windows |
 | webpki-roots | 0.26.11 | CDLA-Permissive-2.0 | Linux, macOS, Windows |
-| webpki-roots | 1.0.9 | CDLA-Permissive-2.0 | Linux, macOS, Windows |
+| webpki-roots | 1.0.10 | CDLA-Permissive-2.0 | Linux, macOS, Windows |
 | winapi | 0.3.9 | MIT/Apache-2.0 | Windows |
 | windows | 0.62.2 | MIT OR Apache-2.0 | Windows |
 | windows-collections | 0.3.2 | MIT OR Apache-2.0 | Windows |

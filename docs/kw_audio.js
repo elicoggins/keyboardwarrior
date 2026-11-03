@@ -140,6 +140,7 @@
     let wantRunning = true;
 
     let hitSounds = [];
+    const uiSounds = [];
 
     // Prepare feedback samples once to keep decoding off the keydown path.
     function prepareHitSounds() {
@@ -221,11 +222,23 @@
         return lag;
     }
 
-    // Play key feedback directly to bypass the 2048-frame song buffer.
-    function kw_audio_hit(kind, volume) {
-        if (!ctx || !Number.isFinite(volume) || volume <= 0) return;
-        const buffer = hitSounds[kind];
-        if (!buffer) return;
+    // Prepare the native UI samples for browser playback.
+    function kw_audio_ui_prepare(kind, ptr, frames, step) {
+        if (!ctx || !ptr || !frames || !Number.isFinite(step)) return;
+        const source = new DataView(wasm_memory.buffer, ptr, frames * 4);
+        const buffer = ctx.createBuffer(2, frames, ctx.sampleRate);
+        const left = buffer.getChannelData(0);
+        const right = buffer.getChannelData(1);
+        for (let i = 0; i < frames; i++) {
+            left[i] = source.getInt16(i * 4, true) * step;
+            right[i] = source.getInt16(i * 4 + 2, true) * step;
+        }
+        uiSounds[kind] = buffer;
+    }
+
+    // One-shots bypass the 2048-frame song buffer (~43 ms at 48 kHz).
+    function playPrepared(buffer, volume) {
+        if (!ctx || !buffer || !Number.isFinite(volume) || volume <= 0) return;
         const source = ctx.createBufferSource();
         const gain = ctx.createGain();
         source.buffer = buffer;
@@ -233,6 +246,14 @@
         source.connect(gain);
         gain.connect(ctx.destination);
         source.start(ctx.currentTime);
+    }
+
+    function kw_audio_ui(kind, volume) {
+        playPrepared(uiSounds[kind], volume);
+    }
+
+    function kw_audio_hit(kind, volume) {
+        playPrepared(hitSounds[kind], volume);
     }
 
     // Suspend during blocking WASM decoding to prevent underrun clicks.
@@ -304,6 +325,8 @@
             importObject.env.kw_song_fetch_cancel = kw_song_fetch_cancel;
             importObject.env.kw_audio_start = kw_audio_start;
             importObject.env.kw_audio_lag = kw_audio_lag;
+            importObject.env.kw_audio_ui_prepare = kw_audio_ui_prepare;
+            importObject.env.kw_audio_ui = kw_audio_ui;
             importObject.env.kw_audio_hit = kw_audio_hit;
             importObject.env.kw_audio_suspend = kw_audio_suspend;
             importObject.env.kw_audio_resume = kw_audio_resume;
