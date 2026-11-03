@@ -12,6 +12,7 @@
 - Improved Linux audio startup, buffer handling and recovery after an output
   device fails or changes.
 - Improved browser audio timing and asset-cache updates.
+- Updated the native HTTPS libraries and bundled certificate roots.
 
 ## 2.0.0 — 2026-09-18
 
